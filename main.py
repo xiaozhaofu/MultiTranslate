@@ -8,13 +8,16 @@ import subprocess
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from functools import partial
 
 from adapters import discover
-from config import BUNDLE_ID, ConfigError, ensure_config, load_config, workflow_paths
+from config import BUNDLE_ID, ConfigError, ensure_config, load_config, resolve_proxy, workflow_paths
+from http_client import send
 from output import format_results, notice
 from panel_import import import_json_to_panel
 from parser import QueryError, parse_query
 from scheduler import Scheduler
+from settings_window import open_window
 
 
 def configure_logging(directory: Path, enabled: bool) -> None:
@@ -42,25 +45,32 @@ def configure_logging(directory: Path, enabled: bool) -> None:
 
 def run(argv: list[str]) -> dict:
     data_dir, cache_dir = workflow_paths()
-    if argv in (["configure"], ["configure-json"]):
+    if argv in (["configure"], ["configure-native"], ["configure-json"]):
         try:
-            if argv == ["configure"]:
-                subtitle = "勾选使用此面板配置，选择服务商并填写密钥"
+            if argv in (["configure"], ["configure-native"]):
+                note = ""
                 try:
                     if import_json_to_panel(data_dir):
-                        subtitle = "已从 JSON 导入未设置的字段；确认后勾选使用此面板配置"
+                        note = "已从 JSON 导入未设置的字段；确认后勾选使用窗口配置。"
                 except ConfigError as exc:
-                    subtitle = str(exc)
+                    note = str(exc)
+                if argv == ["configure"]:
+                    outcome = open_window(note)
+                    return {"items": [notice("设置已保存" if outcome == "saved" else "已关闭设置窗口",
+                                              "配置已更新" if outcome == "saved" else "未保存修改")]}
                 script = f'tell application id "com.runningwithcrayons.Alfred" to reveal workflow "{BUNDLE_ID}" configuration true'
                 command = ["osascript", "-e", script]
                 title = "已打开 Workflow 配置面板"
+                subtitle = note or "勾选使用窗口配置，选择服务商并填写密钥"
             else:
                 path = ensure_config(data_dir)
                 command = ["open", "-t", str(path)]
                 title = "已打开 JSON 配置文件"
-                subtitle = "关闭使用此面板配置后，此文件中的设置生效"
+                subtitle = "关闭使用窗口配置后，此文件中的设置生效"
             subprocess.run(command, check=True, capture_output=True, timeout=10)
             return {"items": [notice(title, subtitle)]}
+        except ConfigError as exc:
+            return {"items": [notice("无法打开配置", str(exc))]}
         except (OSError, subprocess.SubprocessError):
             return {"items": [notice("无法打开配置", "可在 Alfred 设置中点击 Configure Workflow…，或用 trconfig-json 编辑文件")]}
     if not argv or argv[0] != "translate" or len(argv) > 2:
@@ -73,7 +83,11 @@ def run(argv: list[str]) -> dict:
     if not query.request.text.strip():
         result = {"items": [notice("请输入要翻译的文本", "tr hello · tr y:你好 · tr v:set:en 你好 · tr all:hello · 配置：trconfig")]}
     else:
-        adapters = {engine: cls(config["engines"].get(engine, {})) for engine, cls in classes.items()}
+        adapters = {}
+        for engine, cls in classes.items():
+            settings = config["engines"].get(engine, {})
+            mode, url = resolve_proxy(config, settings)
+            adapters[engine] = cls(settings, partial(send, proxy_mode=mode, proxy_url=url))
         results = Scheduler(config, adapters, cache_dir).translate(query)
         result = format_results(results, {engine: cls.name for engine, cls in classes.items()})
     for name in errors:

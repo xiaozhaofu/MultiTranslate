@@ -5,11 +5,12 @@ import json
 import math
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from models import LANGUAGES
 
 BUNDLE_ID = "local.multitranslate.alfred"
-VERSION = "1.4.0"
+VERSION = "1.6.0"
 ROOT = Path(__file__).resolve().parent
 
 
@@ -38,32 +39,36 @@ def ensure_config(data_dir: Path) -> Path:
     return path
 
 
-def _panel_checkbox(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name, "1" if default else "0")
+def _panel_checkbox(name: str, default: bool = False, *, environment: dict | None = None) -> bool:
+    source = os.environ if environment is None else environment
+    value = source.get(name, "1" if default else "0")
     if value not in ("0", "1"):
         raise ConfigError(f"面板字段 {name} 无效，请重新保存 Workflow 配置")
     return value == "1"
 
 
-def _panel_values(defaults: dict) -> dict:
-    engine = os.environ.get("MT_DEFAULT_ENGINE", defaults["default_engine"]).strip()
+def _panel_values(defaults: dict, environment: dict | None = None) -> dict:
+    source = os.environ if environment is None else environment
+    engine = source.get("MT_DEFAULT_ENGINE", defaults["default_engine"]).strip()
     if engine not in defaults["engines"]:
         raise ConfigError("请在 Workflow 配置中选择有效的默认服务商")
-    order = os.environ.get("MT_FALLBACK_ORDER", ",".join(defaults["fallback_order"]))
+    order = source.get("MT_FALLBACK_ORDER", ",".join(defaults["fallback_order"]))
     values = {
         "default_engine": engine,
-        "fallback_enable": _panel_checkbox("MT_FALLBACK_ENABLED", True),
+        "fallback_enable": _panel_checkbox("MT_FALLBACK_ENABLED", True, environment=source),
         "fallback_order": [name.strip() for name in order.split(",") if name.strip()],
+        "proxy": {"mode": source.get("MT_PROXY_MODE", "system").strip(),
+                  "url": source.get("MT_PROXY_URL", "").strip()},
         "engines": {},
     }
     if any(name not in defaults["engines"] for name in values["fallback_order"]):
         raise ConfigError("面板兜底顺序仅支持 " + "、".join(defaults["engines"]))
     for name, fields in defaults["engines"].items():
         prefix = f"MT_{name.upper()}_"
-        settings = {"enable": _panel_checkbox(prefix + "ENABLED")}
+        settings = {"enable": _panel_checkbox(prefix + "ENABLED", environment=source)}
         for field, default in fields.items():
             if field != "enable":
-                settings[field] = os.environ.get(prefix + field.upper(), default).strip()
+                settings[field] = source.get(prefix + field.upper(), default).strip()
         values["engines"][name] = settings
     return values
 
@@ -101,8 +106,22 @@ def load_json_config(path: Path) -> dict:
     return _validate_config(_json_values(path), defaults)
 
 
+def validate_panel_values(values: dict) -> dict:
+    """校验独立窗口提交的值，不修改进程环境或用户文件。"""
+    environment = {key: ("1" if value else "0") if type(value) is bool else value
+                   for key, value in values.items()}
+    _panel_checkbox("MT_USE_PANEL", environment=environment)
+    defaults = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+    return _validate_config(_panel_values(defaults, environment), defaults)
+
+
 def _validate_config(values: dict, defaults: dict) -> dict:
     config = {**defaults, **values}
+    proxy = values.get("proxy", {})
+    if not isinstance(proxy, dict):
+        raise ConfigError("proxy 必须是包含 mode 和 url 的对象")
+    config["proxy"] = {**defaults["proxy"], **proxy}
+    config["proxy"]["url"] = _validate_proxy(config["proxy"]["mode"], config["proxy"]["url"], "全局代理")
     for key in ("fallback_enable", "cache_enabled", "log_enabled"):
         if type(config[key]) is not bool:
             raise ConfigError(f"{key} 必须是 true 或 false")
@@ -131,10 +150,48 @@ def _validate_config(values: dict, defaults: dict) -> dict:
     for name, settings in engines.items():
         if not isinstance(settings, dict):
             raise ConfigError("每个引擎的配置必须是对象")
-        merged = {**defaults["engines"].get(name, {}), **settings}
+        merged = {"proxy_mode": "inherit", "proxy_url": "", **defaults["engines"].get(name, {}), **settings}
         if type(merged.get("enable", False)) is not bool:
             raise ConfigError("引擎 enable 必须是 true 或 false")
         if any(not isinstance(value, str) for key, value in merged.items() if key != "enable"):
-            raise ConfigError("引擎密钥和地域必须是字符串")
+            raise ConfigError("引擎密钥、地域和代理设置必须是字符串")
+        merged["proxy_url"] = _validate_proxy(merged["proxy_mode"], merged["proxy_url"], "厂商代理", allow_inherit=True)
         config["engines"][name] = merged
     return config
+
+
+def _validate_proxy(mode: str, url: str, label: str, *, allow_inherit: bool = False) -> str:
+    allowed = ("inherit", "system", "direct", "custom") if allow_inherit else ("system", "direct", "custom")
+    if not isinstance(mode, str) or mode not in allowed:
+        raise ConfigError(label + "模式无效，请在 trconfig 中重新选择")
+    if not isinstance(url, str):
+        raise ConfigError(label + "地址必须是字符串")
+    url = url.strip()
+    if mode != "custom":
+        return url
+    try:
+        parsed = urlsplit(url)
+        port = parsed.port
+        invalid = (parsed.scheme != "http" or not parsed.hostname or parsed.path not in ("", "/")
+                   or parsed.query or parsed.fragment or "?" in url or "#" in url
+                   or (port is not None and not 1 <= port <= 65535)
+                   or parsed.netloc.endswith(":")
+                   or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in url)
+                   or any(char in parsed.hostname for char in "\\/%@")
+                   or parsed.username == "")
+    except ValueError:
+        invalid = True
+    if invalid:
+        # 不拼接地址：其中可能包含代理密码。
+        raise ConfigError(label + "地址无效，请填写 http://主机:端口；不支持 SOCKS、路径或查询参数")
+    return url
+
+
+def resolve_proxy(config: dict, settings: dict) -> tuple[str, str]:
+    """厂商可独立覆盖全局；返回值仅用于该厂商的 HTTP 传输。"""
+    mode = settings.get("proxy_mode", "inherit")
+    if mode == "inherit":
+        mode, url = config["proxy"]["mode"], config["proxy"]["url"]
+    else:
+        url = settings.get("proxy_url", "")
+    return mode, url if mode == "custom" else ""

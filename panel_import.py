@@ -32,12 +32,14 @@ def _panel_values(config: dict) -> dict:
         "MT_DEFAULT_ENGINE": config["default_engine"],
         "MT_FALLBACK_ENABLED": config["fallback_enable"],
         "MT_FALLBACK_ORDER": ",".join(config["fallback_order"]),
+        "MT_PROXY_MODE": config["proxy"]["mode"],
+        "MT_PROXY_URL": config["proxy"]["url"],
     }
     for engine, fields in ENGINES.items():
         settings = config["engines"].get(engine, {})
         prefix = f"MT_{engine.upper()}_"
         values[prefix + "ENABLED"] = settings.get("enable", False)
-        for field in fields:
+        for field in (*fields, "proxy_mode", "proxy_url"):
             if field in settings:
                 values[prefix + field.upper()] = settings[field]
     return values

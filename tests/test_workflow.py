@@ -125,7 +125,7 @@ class ParserTests(unittest.TestCase):
 class ConfigTests(LocalFiles):
     def test_youdao_defaults_and_existing_json_compatibility(self):
         self.assertEqual(self.config["engines"]["youdao"],
-                         {"enable": False, "app_key": "", "app_secret": ""})
+                         {"enable": False, "app_key": "", "app_secret": "", "proxy_mode": "inherit", "proxy_url": ""})
         del self.config["engines"]["youdao"]
         self.config["fallback_order"].remove("youdao")
         path = self.path / "data" / "config.json"
@@ -193,7 +193,7 @@ class PanelConfigTests(LocalFiles):
             expected[engine] = {"enable": True}
             for field in values:
                 if field != "enable":
-                    value = secrets.token_hex(8)
+                    value = "direct" if field == "proxy_mode" else secrets.token_hex(8)
                     environment[f"MT_{engine.upper()}_{field.upper()}"] = " " + value + " "
                     expected[engine][field] = value
         with patch.dict(os.environ, environment):
@@ -287,7 +287,8 @@ class PanelConfigTests(LocalFiles):
         with patch.dict(os.environ, environment):
             config = load_config(self.path / "data")
         self.assertEqual(config["engines"]["youdao"],
-                         {"enable": True, "app_key": "fixture-id", "app_secret": "fixture-secret"})
+                         {"enable": True, "app_key": "fixture-id", "app_secret": "fixture-secret",
+                          "proxy_mode": "inherit", "proxy_url": ""})
         self.assertEqual(config["default_engine"], "youdao")
 
     def test_builder_rejects_youdao_template_credentials(self):
@@ -324,7 +325,8 @@ class PanelImportTests(LocalFiles):
             values["enable"] = i % 2 == 0
             for field in values:
                 if field != "enable":
-                    values[field] = secrets.token_hex(10) + '\n特殊字符 " \\ & $()'
+                    values[field] = ("direct" if field == "proxy_mode" else
+                                     secrets.token_hex(10) + '\n特殊字符 " \\ & $()')
         original = self.save_source()
         with patch.dict(os.environ, {"MT_USE_PANEL": "1", "MT_DEFAULT_ENGINE": "azure"}):
             self.assertTrue(import_json_to_panel(self.data, self.panel))
@@ -335,7 +337,7 @@ class PanelImportTests(LocalFiles):
                        for key, value in saved.items()}
         with patch.dict(os.environ, {**environment, "MT_USE_PANEL": "1"}):
             loaded = load_config(self.data)
-        for key in ("default_engine", "fallback_enable", "fallback_order", "engines"):
+        for key in ("default_engine", "fallback_enable", "fallback_order", "engines", "proxy"):
             self.assertEqual(loaded[key], self.config[key])
         self.assertEqual(self.source.read_bytes(), original)
         self.assertEqual((self.data / MARKER).read_bytes(), MARKER_CONTENT)
@@ -1074,6 +1076,9 @@ class OutputAndEntryTests(LocalFiles):
         importer = patch("main.import_json_to_panel", return_value=False)
         self.importer = importer.start()
         self.addCleanup(importer.stop)
+        window = patch("main.open_window", return_value="cancelled")
+        self.window = window.start()
+        self.addCleanup(window.stop)
 
     def environment(self):
         return {**os.environ, "alfred_workflow_data": str(self.path / "data"),
@@ -1107,28 +1112,32 @@ class OutputAndEntryTests(LocalFiles):
             self.assertEqual(process.stderr, "")
         self.assertFalse((self.path / "cache" / "translations.json").exists())
 
-    def test_configure_imports_before_opening_native_panel(self):
+    def test_configure_imports_before_opening_independent_window(self):
         order = []
         self.importer.side_effect = lambda directory: order.append("import") or True
-        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
-            opened.side_effect = lambda *args, **kwargs: order.append("open")
+        self.window.side_effect = lambda note: order.append("open") or "saved"
+        with patch.dict(os.environ, self.environment()):
             result = run(["configure"])
         self.assertEqual(order, ["import", "open"])
         self.importer.assert_called_once_with(self.path / "data")
-        command = opened.call_args.args[0]
-        self.assertEqual(command[:2], ["osascript", "-e"])
-        self.assertIn(f'reveal workflow "{BUNDLE_ID}" configuration true', command[2])
-        self.assertEqual(opened.call_args.kwargs["timeout"], 10)
-        self.assertIn("面板", result["items"][0]["title"])
-        self.assertIn("已从 JSON 导入", result["items"][0]["subtitle"])
+        self.assertIn("已从 JSON 导入", self.window.call_args.args[0])
+        self.assertEqual(result["items"][0]["title"], "设置已保存")
 
     def test_failed_import_still_opens_panel_with_safe_reason(self):
         self.importer.side_effect = ConfigError("自动导入未完成，原 JSON 保留")
-        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
+        with patch.dict(os.environ, self.environment()):
             result = run(["configure"])
-        self.assertIn("面板", result["items"][0]["title"])
-        self.assertIn("原 JSON 保留", result["items"][0]["subtitle"])
-        opened.assert_called_once()
+        self.assertEqual(result["items"][0]["title"], "已关闭设置窗口")
+        self.assertIn("原 JSON 保留", self.window.call_args.args[0])
+        self.window.assert_called_once()
+
+    def test_native_configuration_remains_available(self):
+        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
+            run(["configure-native"])
+        command = opened.call_args.args[0]
+        self.assertEqual(command[:2], ["osascript", "-e"])
+        self.assertIn(f'reveal workflow "{BUNDLE_ID}" configuration true', command[2])
+        self.window.assert_not_called()
 
     def test_configure_json_only_opens_the_private_file(self):
         with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
@@ -1138,17 +1147,17 @@ class OutputAndEntryTests(LocalFiles):
         self.importer.assert_not_called()
 
     def test_configure_failure_returns_safe_guidance(self):
-        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run", side_effect=subprocess.TimeoutExpired("fixture", 10)):
+        with patch.dict(os.environ, self.environment()), patch("main.open_window", side_effect=ConfigError("请使用 trconfig-native 或 trconfig-json")):
             result = run(["configure"])
         self.assertFalse(result["items"][0]["valid"])
-        self.assertIn("Configure Workflow", result["items"][0]["subtitle"])
+        self.assertIn("trconfig-native", result["items"][0]["subtitle"])
 
     def test_native_panel_applescript_compiles_without_execution(self):
         compiler = shutil.which("osacompile")
         if compiler is None:
             self.skipTest("当前系统没有 AppleScript 编译器")
         with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
-            run(["configure"])
+            run(["configure-native"])
         scripts = [opened.call_args.args[0][2]]
         with patch("panel_import.subprocess.run") as reloaded:
             _reload_workflow()

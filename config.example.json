@@ -2,6 +2,7 @@
   "default_engine": "volc",
   "fallback_enable": true,
   "fallback_order": ["volc", "azure", "aliyun", "baidu", "youdao"],
+  "proxy": {"mode": "system", "url": ""},
   "target_lang_default": "zh",
   "request_timeout_seconds": 10,
   "query_timeout_seconds": 15,
@@ -11,10 +12,10 @@
   "cache_max_entries": 256,
   "log_enabled": false,
   "engines": {
-    "volc": {"enable": true, "ak": "", "sk": "", "region": "cn-north-1"},
-    "baidu": {"enable": true, "appid": "", "appkey": ""},
-    "aliyun": {"enable": true, "ak": "", "sk": "", "region": "cn-hangzhou"},
-    "azure": {"enable": true, "key": "", "region": ""},
-    "youdao": {"enable": false, "app_key": "", "app_secret": ""}
+    "volc": {"enable": true, "ak": "", "sk": "", "region": "cn-north-1", "proxy_mode": "inherit", "proxy_url": ""},
+    "baidu": {"enable": true, "appid": "", "appkey": "", "proxy_mode": "inherit", "proxy_url": ""},
+    "aliyun": {"enable": true, "ak": "", "sk": "", "region": "cn-hangzhou", "proxy_mode": "inherit", "proxy_url": ""},
+    "azure": {"enable": true, "key": "", "region": "", "proxy_mode": "inherit", "proxy_url": ""},
+    "youdao": {"enable": false, "app_key": "", "app_secret": "", "proxy_mode": "inherit", "proxy_url": ""}
   }
 }
