@@ -80,8 +80,36 @@ class ParserTests(unittest.TestCase):
                 parse_query(value, self.aliases)
 
     def test_custom_adapter_prefix(self):
-        query = parse_query("x:hello", {"x": "extra"}, "de")
+        query = parse_query("x:123", {"x": "extra"}, "de")
         self.assertEqual((query.engine, query.request.to_lang), ("extra", "de"))
+
+    def test_automatic_chinese_and_english_targets(self):
+        for text, target in (("你好", "en"), ("繁體中文", "en"), ("𠀀", "en"),
+                             ("Hello, world!", "zh"), ("Ｈｅｌｌｏ", "zh"),
+                             ("Python 教程 3.10 😀", "en"), ("hello 123 😀", "zh")):
+            with self.subTest(text=text):
+                request = parse_query(text, self.aliases, "fr").request
+                self.assertEqual((request.text, request.to_lang, request.from_lang), (text, target, "auto"))
+
+    def test_explicit_target_overrides_automatic_direction(self):
+        for prefix in ("", "v:", "b:", "a:", "m:", "all:"):
+            for target, text in (("zh", "你好"), ("en", "hello"), ("ja", "你好 hello")):
+                with self.subTest(prefix=prefix, target=target):
+                    request = parse_query(prefix + f"set:{target} {text}", self.aliases, "de").request
+                    self.assertEqual((request.text, request.to_lang), (text, target))
+
+    def test_direction_uses_body_after_prefix_and_preserves_whitespace(self):
+        for prefix in ("", "v:", "b:", "a:", "m:", "all:"):
+            request = parse_query(prefix + " 你好\nworld ", self.aliases).request
+            self.assertEqual((request.text, request.to_lang), (" 你好\nworld ", "en"))
+        self.assertEqual(parse_query("-- set:en hello", self.aliases).request.to_lang, "zh")
+        self.assertEqual(parse_query("v:-- set:zh 你好", self.aliases).request.to_lang, "en")
+
+    def test_other_scripts_and_no_letters_use_configured_default(self):
+        for text in ("こんにちは", "漢字かな English", "안녕하세요", "Привет", "hello русский",
+                     "123 + 456 😀", "", " \n "):
+            with self.subTest(text=text):
+                self.assertEqual(parse_query(text, self.aliases, "fr").request.to_lang, "fr")
 
 
 class ConfigTests(LocalFiles):
@@ -296,6 +324,89 @@ class CacheTests(LocalFiles):
             self.cache.put(TranslationRequest("changed"), TranslationResult(True, "volc", "changed", "改变"))
         self.assertEqual(self.cache.path.read_bytes(), before)
         self.assertEqual(list(self.cache.directory.glob(".cache-*")), [])
+
+
+class AutomaticTranslationTests(LocalFiles):
+    """解析、真实适配器签名与调度串联；只替换 HTTP 边界。"""
+
+    def setUp(self):
+        super().setUp()
+        self.config["cache_enabled"] = False
+        classes, _ = discover()
+        self.aliases = {cls.prefix: name for name, cls in classes.items()}
+        self.wires = []
+        self.payloads = {
+            "volc": {"TranslationList": [{"Translation": "translated"}]},
+            "baidu": {"trans_result": [{"dst": "translated"}]},
+            "aliyun": {"Code": 200, "Data": {"Translated": "translated"}},
+            "azure": [{"translations": [{"text": "translated"}]}],
+        }
+        self.adapters = {}
+        for engine, cls in classes.items():
+            def transport(wire, timeout, engine=engine):
+                self.wires.append((engine, wire))
+                return HttpResponse(200, self.payloads[engine], {})
+            self.adapters[engine] = cls(settings(engine), transport)
+
+    def translate(self, text):
+        query = parse_query(text, self.aliases, self.config["target_lang_default"])
+        return Scheduler(self.config, self.adapters, self.path / "cache").translate(query)
+
+    def wire_languages(self, engine, wire):
+        if engine == "volc":
+            body = json.loads(wire.data)
+            return body["TargetLanguage"], body.get("SourceLanguage", "auto")
+        if engine == "azure":
+            query = parse_qs(urlsplit(wire.full_url).query)
+            return query["to"][0], query.get("from", ["auto"])[0]
+        body = parse_qs(wire.data.decode())
+        if engine == "baidu":
+            return body["to"][0], body["from"][0]
+        return body["TargetLanguage"][0], body["SourceLanguage"][0]
+
+    def test_every_provider_sends_automatic_and_manual_target_once(self):
+        for prefix in self.aliases:
+            for text, target in (("你好", "en"), ("hello", "zh"), ("set:zh 你好", "zh"),
+                                 ("set:en hello", "en"), ("set:ja 你好", "ja")):
+                with self.subTest(prefix=prefix, text=text):
+                    self.wires.clear()
+                    result = self.translate(prefix + ":" + text)
+                    self.assertEqual(len(self.wires), 1)
+                    self.assertTrue(result[0].success)
+                    engine, wire = self.wires[0]
+                    expected = self.adapters[engine].language_map[target]
+                    self.assertEqual(self.wire_languages(engine, wire), (expected, "auto"))
+                    self.assertEqual(result[0].to_lang, target)
+
+    def test_all_providers_receive_same_direction(self):
+        for text, target in (("你好", "en"), ("hello", "zh"), ("set:ja hello", "ja")):
+            with self.subTest(text=text):
+                self.wires.clear()
+                results = self.translate("all:" + text)
+                self.assertEqual(len(self.wires), 4)
+                self.assertEqual({row.to_lang for row in results}, {target})
+                for engine, wire in self.wires:
+                    self.assertEqual(self.wire_languages(engine, wire), (self.adapters[engine].language_map[target], "auto"))
+
+    def test_default_fallback_keeps_automatic_target_without_detection_call(self):
+        self.payloads["volc"] = {"ResponseMetadata": {"Error": {"Code": "-429"}}}
+        results = self.translate("你好 world")
+        self.assertEqual([(row.engine, row.to_lang, row.fallback_from) for row in results], [("azure", "en", "volc")])
+        self.assertEqual([engine for engine, _ in self.wires], ["volc", "azure"])
+        self.assertTrue(all(self.wire_languages(engine, wire)[0] == "en" for engine, wire in self.wires))
+
+    def test_automatic_and_manual_targets_do_not_mix_old_cache(self):
+        self.config["cache_enabled"] = True
+        cache = TranslationCache(self.path / "cache", self.config)
+        old_request = TranslationRequest("你好", "zh")
+        cache.put(old_request, TranslationResult(True, "azure", "你好", "旧中文缓存", "zh", "zh"))
+        automatic = self.translate("m:你好")[0]
+        self.assertEqual((automatic.to_lang, automatic.cached), ("en", False))
+        self.assertEqual(len(self.wires), 1)
+        self.assertTrue(self.translate("m:你好")[0].cached)
+        manual = self.translate("m:set:zh 你好")[0]
+        self.assertEqual((manual.translated_text, manual.to_lang, manual.cached), ("旧中文缓存", "zh", True))
+        self.assertEqual(len(self.wires), 1)
 
 
 class FakeAdapter:

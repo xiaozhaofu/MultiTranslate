@@ -1,13 +1,20 @@
 # MultiTranslate 多引擎翻译
 
-Alfred 5 文本翻译 Workflow，支持火山引擎、百度、阿里云与微软 Azure。纯 Python 标准库，无 pip 运行依赖。需要 Alfred Powerpack，以及可用的 Python 3.10 或更新版本。
+Alfred 5 文本翻译 Workflow，支持火山引擎、百度、阿里云与微软 Azure。1.1.0 起支持自动中英互译，手动 `set:` 指定语言优先。纯 Python 标准库，无 pip 运行依赖。需要 Alfred Powerpack，以及可用的 Python 3.10 或更新版本。
 
 ## 安装与开始
 
-1. 双击 `dist/MultiTranslate.alfredworkflow`，由 Alfred 导入。
-2. 运行 `trconfig`，用文本编辑器打开配置文件。
-3. 填写要使用的服务商密钥，关闭不使用的引擎，确认 `default_engine` 与 `fallback_order`，保存 JSON。
-4. 运行 `tr hello`；选中成功结果按回车复制完整译文。默认不会自动粘贴到其他应用。
+1. 双击 `dist/MultiTranslate.alfredworkflow`，在 Alfred 中完成导入。
+2. 如果当前看到包含 `tr`、`trconfig` 方块和连接线的 Workflow 编辑页面，先关闭或移开这个设置窗口，保留 Alfred 运行。
+3. 用你平时唤出 Alfred 的快捷键，打开 **Alfred 搜索浮窗**。
+4. 在搜索浮窗输入 `trconfig`，选中「配置翻译服务商」，按回车。
+5. 插件会自动用默认文本编辑器打开用户的 `config.json`。在这个文件中填写要使用的服务商密钥；各字段的含义见下方「配置与数据」。
+6. 将不使用的引擎设为 `"enable": false`，确认 `default_engine` 与 `fallback_order`，然后按 `⌘S` 保存文件。配置采用 JSON 格式，保留字段的双引号、逗号和括号。
+7. 再次唤出 Alfred，在搜索浮窗输入 `tr hello` 自动译成中文，或输入 `tr 你好` 自动译成英文；选中成功结果按回车复制完整译文。默认不会自动粘贴到其他应用。
+
+**`trconfig` 是 Alfred 搜索关键词，不是终端命令。** Workflow 编辑页面中的 `trconfig` 方块只是入口定义，不是输入框；点击该方块或左上角的「Configure Workflow…」按钮不会执行这里的打开密钥配置操作。请按第 3、4 步，在 Alfred 搜索浮窗输入关键词并回车。
+
+填写密钥时编辑的是第 5 步打开的用户 `config.json`，项目中的 `config.example.json` 仅为模板。
 
 Workflow 不自带 Python，也不会自动安装依赖。如果显示缺少解释器，先安装 Python 3.10+（可通过 Python 官网或已有包管理器）。在终端运行 `command -v python3` 查看位置，再到 Workflow 的环境变量设置中将 `PYTHON_BINARY` 填为你自己的解释器位置；默认留空从 Alfred 的 PATH 查找。不要把自己的路径提交或打包。
 
@@ -17,19 +24,31 @@ Workflow 不自带 Python，也不会自动安装依赖。如果显示缺少解�
 
 | 输入 | 行为 |
 | --- | --- |
-| `tr hello` | 自动识别源语言，默认引擎译为简体中文 |
+| `tr hello` | 默认引擎自动译为简体中文 |
+| `tr 你好` | 默认引擎自动译为英文 |
+| `tr a:你好` | 阿里云自动译为英文 |
 | `tr v:hello` | 火山引擎 |
 | `tr b:hello` | 百度 |
 | `tr a:hello` | 阿里云 |
 | `tr m:hello` | Azure |
 | `tr all:hello` | 并发调用全部启用的引擎，每家一行 |
+| `tr all:你好` | 全部启用引擎同时译为英文，每家一行 |
 | `tr set:en 你好` | 默认引擎译为英文；只对本次输入生效 |
+| `tr set:zh 你好` | 手动指定中文，优先于自动中英互译 |
 | `tr v:set:ja 你好` | 火山引擎译为日文 |
 | `tr -- v:hello` | 将 `v:hello` 当作原文 |
 | `tr v:-- set:en hello` | 火山将 `set:en hello` 当作原文 |
-| `trconfig` | 打开实际用户配置 |
+| `trconfig` | 在 Alfred 搜索浮窗输入并回车，打开用户 `config.json` |
 
 目标语言：`zh` 简体中文、`en` 英语、`ja` 日语、`ko` 韩语、`fr` 法语、`de` 德语、`ru` 俄语。未提供繁体语言选项。`set:` 后使用一个空格分隔原文；剩余空白、换行保留。空输入只给提示。
+
+目标语言优先级为：**手动 `set:` → 自动中英互译 → 配置中的 `target_lang_default`**。未使用 `set:` 时：
+
+- 中文（包括繁体和扩展汉字）自动译为英文；中英混合文本也译为英文。
+- 仅含拉丁字母的文本按英文处理，自动译为简体中文；数字、标点和 emoji 不影响这个方向。
+- 含假名、韩文、俄文等其他语言字母，或只有数字、标点、emoji 时，使用 `target_lang_default`。
+
+上述判断在移除查询前缀后进行，只用于选择目标语言，不修改原文，也不增加语言检测 API 请求。服务商仍自动识别源语言。字符规则不能准确区分英语与法语等纯拉丁文字，也不能区分中文与纯汉字日文；有歧义时请用 `set:` 指定目标。默认、显式引擎、`all:` 和兜底都采用相同的方向选择规则。
 
 前缀只在开头按上述顺序识别；URL、正文中的冒号不会被拆开。只有无引擎前缀时才兜底，显式指定和 `all:` 不会悄悄换引擎。关闭默认引擎时，无前缀调用在允许兜底的情况下会跳过它。
 
@@ -48,7 +67,7 @@ JSON 不能写注释，下面是字段说明；删去可选全局字段会使用
 | `default_engine` | 无前缀调用的首选引擎，默认 `volc`；取已安装适配器 ID |
 | `fallback_enable` | 是否为无前缀调用启用兜底，默认 `true`；布尔值 |
 | `fallback_order` | 兜底及 all 的展示优先级，默认 `volc, azure, aliyun, baidu`；字符串数组，重复项自动去重 |
-| `target_lang_default` | 未使用 set 时的目标语言，默认 `zh`；取上述七种语言 |
+| `target_lang_default` | 未使用 set 且无法按上述字符规则选择中英互译方向时的回落目标，默认 `zh`；取上述七种语言。修改此字段不会关闭自动中英互译 |
 | `request_timeout_seconds` | 单家请求等待上限，默认 10 秒，范围 0.1–10 |
 | `query_timeout_seconds` | 整次查询的调度等待预算，默认 15 秒，范围 0.1–60；各请求同时受剩余预算约束 |
 | `cache_enabled` | 成功结果缓存开关，默认 `true` |
@@ -67,6 +86,8 @@ JSON 不能写注释，下面是字段说明；删去可选全局字段会使用
 | Workflow 环境变量 `PYTHON_BINARY` | 默认空，使用 PATH 中的 python3；需要时由用户提供解释器位置，不是 JSON 字段 |
 
 缓存键隔离服务商、原文、源/目标语言与缓存格式版本。只保存短文本的成功结果，不保存密钥、认证头或失败；JSON 有跨进程锁和原子替换，损坏或忙时退化为未命中。缓存含原文与译文，需要时可以删除 `translations.json` 清除。日志名为 `workflow.log`，最多一个备份，每个文件 256 KiB；仅记录引擎、错误码、HTTP 状态、请求 ID、耗时和缓存状态。
+
+升级到 1.1.0 后无需修改已有密钥配置，也无需手动清空缓存：目标语言属于缓存键，中文自动译英文不会复用此前中文译中文的结果。重新导入新版 `.alfredworkflow` 并替换同一 Workflow 即可使用新行为。
 
 超过服务商单次上限时不截断、不发送：火山和阿里 5000 字符，百度 6000 UTF-8 字节，Azure 50000 字符。`all:` 中各家仍使用同一份原文，超限项独立报错。
 

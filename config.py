@@ -9,7 +9,7 @@ from pathlib import Path
 from models import LANGUAGES
 
 BUNDLE_ID = "local.multitranslate.alfred"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 ROOT = Path(__file__).resolve().parent
 
 
