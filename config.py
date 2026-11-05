@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from models import LANGUAGES
 
 BUNDLE_ID = "local.multitranslate.alfred"
-VERSION = "1.6.1"
+VERSION = "1.6.2"
 ROOT = Path(__file__).resolve().parent
 
 

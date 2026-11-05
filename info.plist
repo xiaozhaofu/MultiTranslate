@@ -7,7 +7,7 @@
 	<key>name</key>
 	<string>MultiTranslate 多引擎翻译</string>
 	<key>version</key>
-	<string>1.6.1</string>
+	<string>1.6.2</string>
 	<key>createdby</key>
 	<string>MultiTranslate</string>
 	<key>description</key>
@@ -470,7 +470,7 @@ trconfig-native 打开原生面板；trconfig-json 编辑 JSON。现有密钥、
 			<key>variable</key>
 			<string>MT_VOLC_ENABLED</string>
 			<key>label</key>
-			<string>火山引擎</string>
+			<string>🔥 火山引擎</string>
 			<key>description</key>
 			<string>默认关闭；启用后支持 v: 指定翻译和 all: 对比。</string>
 			<key>config</key>
@@ -607,7 +607,7 @@ trconfig-native 打开原生面板；trconfig-json 编辑 JSON。现有密钥、
 			<key>variable</key>
 			<string>MT_BAIDU_ENABLED</string>
 			<key>label</key>
-			<string>百度翻译</string>
+			<string>🐾 百度翻译</string>
 			<key>description</key>
 			<string>默认关闭；启用后支持 b: 指定翻译和 all: 对比。</string>
 			<key>config</key>
@@ -723,7 +723,7 @@ trconfig-native 打开原生面板；trconfig-json 编辑 JSON。现有密钥、
 			<key>variable</key>
 			<string>MT_ALIYUN_ENABLED</string>
 			<key>label</key>
-			<string>阿里云</string>
+			<string>☁️ 阿里云</string>
 			<key>description</key>
 			<string>默认关闭；启用后支持 a: 指定翻译和 all: 对比。</string>
 			<key>config</key>
@@ -860,7 +860,7 @@ trconfig-native 打开原生面板；trconfig-json 编辑 JSON。现有密钥、
 			<key>variable</key>
 			<string>MT_AZURE_ENABLED</string>
 			<key>label</key>
-			<string>微软 Azure</string>
+			<string>🌐 微软 Azure</string>
 			<key>description</key>
 			<string>默认关闭；启用后支持 m: 指定翻译和 all: 对比。</string>
 			<key>config</key>
@@ -976,7 +976,7 @@ trconfig-native 打开原生面板；trconfig-json 编辑 JSON。现有密钥、
 			<key>variable</key>
 			<string>MT_YOUDAO_ENABLED</string>
 			<key>label</key>
-			<string>有道翻译</string>
+			<string>📖 有道翻译</string>
 			<key>description</key>
 			<string>默认关闭；启用后支持 y: 指定翻译和 all: 对比。</string>
 			<key>config</key>
