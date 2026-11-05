@@ -17,7 +17,6 @@ from output import format_results, notice
 from panel_import import import_json_to_panel
 from parser import QueryError, parse_query
 from scheduler import Scheduler
-from settings_window import open_window
 
 
 def configure_logging(directory: Path, enabled: bool) -> None:
@@ -51,22 +50,18 @@ def run(argv: list[str]) -> dict:
                 note = ""
                 try:
                     if import_json_to_panel(data_dir):
-                        note = "已从 JSON 导入未设置的字段；确认后勾选使用窗口配置。"
+                        note = "已从 JSON 导入未设置的字段；确认后勾选使用此面板配置。"
                 except ConfigError as exc:
                     note = str(exc)
-                if argv == ["configure"]:
-                    outcome = open_window(note)
-                    return {"items": [notice("设置已保存" if outcome == "saved" else "已关闭设置窗口",
-                                              "配置已更新" if outcome == "saved" else "未保存修改")]}
                 script = f'tell application id "com.runningwithcrayons.Alfred" to reveal workflow "{BUNDLE_ID}" configuration true'
                 command = ["osascript", "-e", script]
                 title = "已打开 Workflow 配置面板"
-                subtitle = note or "勾选使用窗口配置，选择服务商并填写密钥"
+                subtitle = note or "勾选使用此面板配置，选择服务商并填写密钥"
             else:
                 path = ensure_config(data_dir)
                 command = ["open", "-t", str(path)]
                 title = "已打开 JSON 配置文件"
-                subtitle = "关闭使用窗口配置后，此文件中的设置生效"
+                subtitle = "关闭使用此面板配置后，此文件中的设置生效"
             subprocess.run(command, check=True, capture_output=True, timeout=10)
             return {"items": [notice(title, subtitle)]}
         except ConfigError as exc:

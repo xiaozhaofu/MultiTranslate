@@ -1,29 +1,29 @@
 # MultiTranslate 多引擎翻译
 
-Alfred 5 文本翻译 Workflow，支持火山引擎、百度、阿里云、微软 Azure 和有道。1.6.2 在厂商名称前增加识别图标；保留“文 / A + 双向箭头”翻译图标、独立 macOS 配置窗口、厂商间全宽分割线及密钥默认隐藏。全局代理与厂商覆盖、已有 JSON 一次导入、自动中英互译及手动 `set:` 优先继续支持。
+Alfred 5 文本翻译 Workflow，支持火山引擎、百度、阿里云、微软 Azure 和有道。1.6.3 恢复使用 Alfred 原生配置面板，移除独立设置窗口；保留翻译图标、厂商识别图标、全局代理与厂商覆盖、已有 JSON 一次导入、自动中英互译及手动 `set:` 优先。
 
-需要 Alfred Powerpack 和 Python 3.10+。翻译及配置后端只使用 Python 标准库，无 pip 依赖；独立窗口使用系统 AppKit，安装包附带 Intel / Apple Silicon 通用程序，日常使用不需要 Swift 编译器。独立窗口要求 macOS 11+；更早系统仍可使用原生配置面板或 JSON 入口。
+需要 Alfred Powerpack 和 Python 3.10+，只使用 Python 标准库，无 pip 依赖。配置界面由 Alfred 提供，运行和打包均不需要 Swift 或 Xcode。
 
 ## 安装与开始
 
 1. 双击 `dist/MultiTranslate.alfredworkflow`，在 Alfred 中完成导入。
-2. 在 **Alfred 搜索浮窗**输入 `trconfig` 并回车，自动导入已有 JSON 设置并打开独立配置窗口。全新安装、没有 JSON 时显示默认设置和空密钥。
-3. 勾选 **使用窗口配置**，然后在 **默认服务商** 下拉框中选择要用的厂商。已有的配置来源开关保持原状态，不会因升级自动切换。
+2. 在 Alfred 设置的 **Workflows** 中选中本工作流，点击 **Configure Workflow…** 打开原生配置面板。也可在 **Alfred 搜索浮窗**输入 `trconfig` 并回车；有旧 JSON 配置时，首次运行此命令会先自动导入。全新安装显示默认设置和空密钥。
+3. 勾选 **使用此面板配置**，然后在 **默认服务商** 下拉框中选择要用的厂商。已有的配置来源开关保持原状态，不会因升级自动切换。
 4. 向下找到该厂商，确认 **启用** 开关及密钥；已有 JSON 成功导入后不必重新填写。全新安装只需配置一家即可；其他厂商保持关闭。例如选择阿里云，就启用阿里云并填写它的 AccessKey ID、AccessKey Secret，地域保留 `cn-hangzhou`。
-5. 根据需要设置自动兜底及服务商顺序，点击窗口右下角 **保存**。默认服务商也需要勾选启用；填写了密钥但未启用的厂商不会被调用。
+5. 根据需要设置自动兜底及服务商顺序，保存并关闭配置面板。默认服务商也需要勾选启用；填写了密钥但未启用的厂商不会被调用。
 6. 确保 Workflow 已启用，再用平时的快捷键打开 **Alfred 搜索浮窗**。输入 `tr hello` 自动译成中文，或输入 `tr 你好` 自动译成英文；选中成功结果按回车复制完整译文。默认不会自动粘贴到其他应用。
 
-窗口分为全局设置、全局代理、五家厂商和运行环境，各组之间有横跨标签与输入框两列的真正分割线。每家标题右侧是启用开关，组内按 **凭据 → 地域（如适用）→ 代理模式 → 代理地址** 排列；向下滚动可配置全部厂商，底部操作始终可见。
+面板按全局设置、全局代理、五家厂商和运行环境排列。每家按 **启用 → 凭据 → 地域（如适用）→ 代理模式 → 代理地址** 排列，向下滚动可配置全部厂商。布局使用 Alfred 原生控件，不再提供独立窗口的全宽分割线和密钥遮罩。
 
-厂商标题带有识别图标：🔥 火山引擎、🐾 百度翻译、☁️ 阿里云、🌐 微软 Azure、📖 有道翻译。独立窗口与 Alfred 原生面板使用相同标识，启用状态和已有设置不变。
+厂商启用项保留识别图标：🔥 火山引擎、🐾 百度翻译、☁️ 阿里云、🌐 微软 Azure、📖 有道翻译。
 
-密钥和代理地址默认遮罩，点击右上角 **显示密钥和代理地址** 可临时查看。**取消** 或关闭窗口不会保存本次表单修改；有未保存内容时会再次确认。首次打开前已经完成的 JSON 自动导入仍保留。保存失败会显示原因并保留表单内容；若其他窗口改了设置，会拒绝覆盖，需重新打开后再编辑。
+从独立窗口版本升级后，原来的厂商、密钥、代理和配置来源开关状态继续保留，无需重新填写；只是由 Alfred 原生面板负责编辑和保存。
 
-窗口底部的 **原生面板…** 或命令 `trconfig-native` 可打开 Alfred 原生配置表单；**编辑 JSON…** 或命令 `trconfig-json` 打开原 JSON。Alfred 设置页的 **Configure Workflow…** 按钮仍打开原生面板，不能替换为此独立窗口。独立窗口与原生面板共享同一套设置，建议一次只在一个窗口编辑。
+`trconfig-native` 保留为兼容别名，与 `trconfig` 打开同一个原生面板。`trconfig-json` 继续打开原 JSON。
 
-**`trconfig` 是 Alfred 搜索关键词，不是终端命令。** 双击工作流编辑页面里的 `trconfig` 方块只会编辑节点属性；要打开独立配置窗口，请在平时翻译用的 Alfred 搜索浮窗输入 `trconfig`，再按回车。
+**`trconfig` 是 Alfred 搜索关键词，不是终端命令。** 双击工作流编辑页面里的 `trconfig` 方块只会编辑节点属性。日常可直接点击 **Configure Workflow…**，不必每次输入关键词。
 
-已有 JSON 配置用户：更新后运行一次 `trconfig`，确认自动填入的设置，再勾选「使用窗口配置」并保存即可。导入不会自动切换配置来源，也不会改写或删除原 JSON。若要继续用 JSON，保持面板开关关闭，用 `trconfig-json` 编辑即可。详细导入规则见下方。
+已有 JSON 配置用户：更新后运行一次 `trconfig`，确认自动填入的设置，再勾选「使用此面板配置」并保存即可。导入不会自动切换配置来源，也不会改写或删除原 JSON。若要继续用 JSON，保持面板开关关闭，用 `trconfig-json` 编辑即可。详细导入规则见下方。
 
 Workflow 不自带 Python，也不会自动安装依赖。如果显示缺少解释器，先安装 Python 3.10+（可通过 Python 官网或已有包管理器）。在终端运行 `command -v python3` 查看位置，再填入配置面板底部「Python 解释器（可选）」输入框；对应变量为 `PYTHON_BINARY`，默认留空从 Alfred 的 PATH 查找。不要把自己的路径提交或打包。
 
@@ -32,7 +32,7 @@ Workflow 不自带 Python，也不会自动安装依赖。如果显示缺少解�
 ### 使用有道翻译
 
 1. 在[有道智云控制台](https://ai.youdao.com/console/)开通文本翻译服务，创建并绑定应用，取得 **应用 ID（appKey）** 和 **应用密钥（appSecret）**。
-2. 在 Alfred 输入 `trconfig` 并回车，勾选「使用窗口配置」，向下找到「有道翻译」并启用，将两项凭据填入对应字段，保存。
+2. 在 Alfred 输入 `trconfig` 并回车，勾选「使用此面板配置」，向下找到「有道翻译」并启用，将两项凭据填入对应字段，保存。
 3. 输入 `tr y:你好` 自动译成英文，或 `tr y:hello` 自动译成中文；`tr y:set:ja 你好` 手动指定日语。也可将默认服务商选为有道，用普通 `tr` 调用。
 
 有道默认关闭，不需要填写地域。启用后会加入 `all:` 对比；希望其他厂商失败时由有道兜底，请在「服务商顺序」中加入 `youdao`。已保存的服务商顺序不会被升级自动改写。
@@ -47,7 +47,7 @@ JSON 字段 `app_key` 对应应用 ID，不是应用密钥。已完成一次 JSO
 
 ### 配置 HTTP 代理
 
-在 Alfred 输入 **`trconfig`**，确保已勾选「使用窗口配置」。在「全局代理模式」选择代理方式；每个厂商下面也有独立的「代理模式」和「代理地址」。设置后保存即可，不需要修改系统代理。
+在 Alfred 输入 **`trconfig`**，确保已勾选「使用此面板配置」。在「全局代理模式」选择代理方式；每个厂商下面也有独立的「代理模式」和「代理地址」。设置后保存即可，不需要修改系统代理。
 
 | 模式 | 行为 | 地址是否使用 |
 | --- | --- | --- |
@@ -101,8 +101,8 @@ JSON 模式下，添加全局 `proxy`，并在对应引擎对象中加入 `proxy
 | `tr v:set:ja 你好` | 火山引擎译为日文 |
 | `tr -- v:hello` | 将 `v:hello` 当作原文 |
 | `tr v:-- set:en hello` | 火山将 `set:en hello` 当作原文 |
-| `trconfig` | 首次自动导入已有 JSON 设置，再打开独立配置窗口 |
-| `trconfig-native` | 打开 Alfred 原生配置面板，共享相同设置，作为备用入口 |
+| `trconfig` | 首次自动导入已有 JSON 设置，再打开 Alfred 原生配置面板 |
+| `trconfig-native` | 兼容别名，与 `trconfig` 相同 |
 | `trconfig-json` | 打开用户 `config.json`；关闭面板模式后，JSON 设置生效 |
 
 目标语言：`zh` 简体中文、`en` 英语、`ja` 日语、`ko` 韩语、`fr` 法语、`de` 德语、`ru` 俄语。未提供繁体语言选项。`set:` 后使用一个空格分隔原文；剩余空白、换行保留。空输入只给提示。
@@ -123,12 +123,12 @@ JSON 模式下，添加全局 `proxy`，并在对应引擎对象中加入 `proxy
 
 ## 配置与数据
 
-有两种配置来源，由「使用窗口配置」决定：
+有两种配置来源，由「使用此面板配置」决定：
 
 - **勾选**：翻译时使用原生面板字段，不读取或写入用户 JSON。缓存、超时和未在面板展示的选项使用 `config.example.json` 中的默认值。
 - **未勾选（默认）**：使用用户 `config.json`，保留全部现有选项；面板中的厂商、密钥和兜底字段不会覆盖 JSON。`PYTHON_BINARY` 是两种模式共用的启动设置。
 
-窗口和原生面板的值保存在同一个 `prefs.plist`，包括输入或导入的密钥；独立窗口保存时保留其他已有字段，原 JSON 不变。这是本地配置文件，遮罩不等于加密，也不是 Keychain。独立窗口默认隐藏密钥及代理地址，原生面板仍可能显示明文，请勿分享含私密内容的截图或配置文件。`prefs.plist` 已加入忽略规则，打包器只取白名单文件，不会打包它。
+面板值继续保存在原来的 `prefs.plist`，包括输入或导入的密钥，不会因为移除独立窗口而迁移或清空；原 JSON 也不变。这是本地配置文件，不是 Keychain。原生面板可能明文显示密钥和代理地址，请勿分享含私密内容的截图或配置文件。`prefs.plist` 已加入忽略规则，打包器只取白名单文件，不会打包它。
 
 发行默认值不含真实密钥。在 JSON 模式首次使用或执行 `trconfig-json` 时，以权限 0600 创建用户 `config.json`，之后绝不覆盖它。其位置通过 `alfred_workflow_data` 获取；缓存和日志通过 `alfred_workflow_cache` 获取。未在 Alfred 内运行时，按当前用户主目录动态定位对应数据目录。Bundle ID 保持 `local.multitranslate.alfred`。
 
@@ -136,7 +136,7 @@ JSON 模式下，添加全局 `proxy`，并在对应引擎对象中加入 `proxy
 
 1. 更新 Workflow 后，在 Alfred 搜索浮窗输入 **`trconfig`** 并回车。程序从用户数据目录现有的 `config.json` 导入，再打开面板；不需要复制粘贴密钥。
 2. 核对默认服务商、启用开关、密钥和地域。**面板已保存的字段优先**，即使值为空或关闭，也不会被 JSON 覆盖；没有保存过的字段才自动填入。
-3. 如需切换到面板管理，勾选 **使用窗口配置** 并保存。导入本身不改变这个开关；取消勾选仍可使用原 JSON。
+3. 如需切换到面板管理，勾选 **使用此面板配置** 并保存。导入本身不改变这个开关；取消勾选仍可使用原 JSON。
 
 导入内容为五家服务商的启用状态、全部密钥字段、适用的地域、代理设置，以及默认服务商、自动兜底开关、兜底顺序和全局代理。JSON 中删除的服务商会保持关闭。Python 解释器设置不受影响；缓存、超时、日志、回落目标语言等高级选项不导入，继续使用这些自定义项请保持 JSON 模式。
 
@@ -144,13 +144,13 @@ JSON 模式下，添加全局 `proxy`，并在对应引擎对象中加入 `proxy
 
 没有 JSON 时不创建配置或导入标记。JSON 格式错误、包含面板尚未支持的服务商、面板配置损坏或正在被其他进程改动时，会停止导入，保留原文件；仍可打开面板检查，或用 `trconfig-json` 修正 JSON 后重试。写入或刷新失败会尝试恢复原面板；不会自动启用导入后的配置。导入只处理本地文件，不调用翻译 API，也不会把密钥放入命令行或日志。
 
-### 窗口与原生面板共享的字段
+### 原生面板字段
 
 除 Python 解释器外，下列变量只在面板模式启用时使用。复选框由 Alfred 传入字符串 `0` 或 `1`，代码会进行严格校验；不允许把字符串 `"0"` 当作开启。
 
 | 面板字段 / 变量 | 用途、默认值与约束 |
 | --- | --- |
-| 使用窗口配置 / `MT_USE_PANEL` | 默认关闭（0），保持现有 JSON 生效；勾选为 1 |
+| 使用此面板配置 / `MT_USE_PANEL` | 默认关闭（0），保持现有 JSON 生效；勾选为 1 |
 | 默认服务商 / `MT_DEFAULT_ENGINE` | 默认 `volc`，下拉可选 `volc / baidu / aliyun / azure / youdao`；对应服务商必须另行启用并填写密钥 |
 | 自动兜底 / `MT_FALLBACK_ENABLED` | 默认开启（1）；仅无服务商前缀的请求使用 |
 | 服务商顺序 / `MT_FALLBACK_ORDER` | 用于兜底与 all 对比；默认 `volc,azure,aliyun,baidu,youdao`；逗号分隔上述 ID，空格会清理；留空则不追加兜底候选；保留已保存的顺序 |
@@ -170,7 +170,7 @@ JSON 模式下，添加全局 `proxy`，并在对应引擎对象中加入 `proxy
 | 有道应用密钥 / `MT_YOUDAO_APP_SECRET` | 默认空，启用有道后必填；与应用 ID 配对参与 v3 签名，不填写地域 |
 | Python 解释器 / `PYTHON_BINARY` | 默认空，从 PATH 查找；必要时填入用户自己的 Python 3.10+ 解释器位置 |
 
-清空面板密钥会立即使该厂商缺少凭据，不会偷偷回退到 JSON 中的旧密钥。需要恢复 JSON 设置时，只要取消「使用窗口配置」。
+清空面板密钥会立即使该厂商缺少凭据，不会偷偷回退到 JSON 中的旧密钥。需要恢复 JSON 设置时，只要取消「使用此面板配置」。
 
 ### JSON 模式字段
 
@@ -237,9 +237,6 @@ JSON 不能写注释，下面是字段说明；删去可选全局字段会使用
 main.py                 入口、配置引导、日志初始化
 config.py               配置读取和用户目录
 panel_import.py         已有 JSON 一次性导入原生配置面板
-settings_window.py      窗口数据、校验、原子保存及失败恢复
-config_window.swift     AppKit 独立窗口源码与真正全宽分隔
-config_window           已编译的 Intel / Apple Silicon 通用程序
 config.example.json     无密钥模板
 models.py / parser.py   统一数据结构与前缀解析
 scheduler.py            默认、指定、并发及兜底调用
@@ -252,7 +249,7 @@ adapters/
 bootstrap.sh            解释器检查与 argv 透传
 info.plist              已连好的 Alfred 对象
 icon.svg / icon.png     翻译图标矢量源及 1024 像素透明背景图
-build_workflow.py       编译原生窗口并按白名单打包
+build_workflow.py       按白名单打包
 tests/                  离线功能验证
 VALIDATION.md           实际验证记录及未验证范围
 ```
@@ -265,10 +262,10 @@ VALIDATION.md           实际验证记录及未验证范围
 2. 添加 Script Filter：关键词 `tr`、Argument Optional、关闭 Alfred filters results、语言选 bash、输入方式选 argv；脚本为 `exec bash ./bootstrap.sh translate "$@"`。
 3. Run Behaviour 选择终止前一个脚本、输入停止后自动延迟，关闭首字符立即执行；保留原始空白。
 4. 连接 Copy to Clipboard：使用传入文本（文本框留空），关闭自动粘贴、开启忽略动态占位符。这样原文中的 `{date}` 等不会被再次展开。
-5. 添加无参数 Keyword `trconfig`，连接 Run Script，脚本为 `exec bash ./bootstrap.sh configure`，自动导入已有 JSON 后打开独立窗口。备用 Keyword `trconfig-native` 连接 `exec bash ./bootstrap.sh configure-native`，打开原生面板；`trconfig-json` 连接 `exec bash ./bootstrap.sh configure-json`，打开 JSON 文件。
+5. 添加无参数 Keyword `trconfig`，连接 Run Script，脚本为 `exec bash ./bootstrap.sh configure`，自动导入已有 JSON 后打开原生面板。兼容 Keyword `trconfig-native` 连接 `exec bash ./bootstrap.sh configure-native`，行为相同；`trconfig-json` 连接 `exec bash ./bootstrap.sh configure-json`，打开 JSON 文件。
 6. 原生面板定义保存在 `info.plist` 的 `userconfigurationconfig`；字段默认值在发行包中均不含密钥，用户填写的值由 Alfred 作为环境变量传给脚本。
 
-安装包日常使用无需编译。自行修改窗口或重新打包时，需要本机已有 Xcode 命令行工具（`xcrun`、`swiftc`、`lipo`、`codesign`）；打包脚本不会自动安装工具或依赖。窗口为 macOS 11+ 的双架构程序，采用本地 ad-hoc 签名，不代表 Apple 公证。
+重新打包只需要 Python 3.10+，不再编译或签名原生程序，打包脚本不会自动安装工具或依赖。
 
 在原项目根目录执行打包与离线功能验证（不访问云端、不安装 Workflow）：
 

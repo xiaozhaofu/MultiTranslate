@@ -3,8 +3,6 @@ from __future__ import annotations
 
 import json
 import plistlib
-import subprocess
-import tempfile
 import zipfile
 from pathlib import Path
 
@@ -13,38 +11,8 @@ from config import BUNDLE_ID, ROOT, VERSION
 RUNTIME_FILES = (
     "main.py", "config.py", "panel_import.py", "models.py", "parser.py", "scheduler.py", "cache.py",
     "http_client.py", "output.py", "utils.py", "bootstrap.sh", "config.example.json",
-    "info.plist", "README.md", "settings_window.py", "config_window.swift", "config_window",
-    "icon.png", "icon.svg",
+    "info.plist", "README.md", "icon.png", "icon.svg",
 )
-
-
-def build_native_window() -> None:
-    """直接在原目录编译双架构窗口；临时编译缓存不进入发行包。"""
-    sdk = subprocess.check_output(["xcrun", "--show-sdk-path"], text=True).strip()
-    with tempfile.TemporaryDirectory(prefix=".native-build-", dir=ROOT) as directory:
-        temporary = Path(directory)
-        relative = temporary.relative_to(ROOT)
-        objects = []
-        for architecture in ("x86_64", "arm64"):
-            target = relative / architecture
-            subprocess.run([
-                "xcrun", "swiftc", "-Osize", "-sdk", sdk,
-                "-target", architecture + "-apple-macosx11.0",
-                "-module-name", "MultiTranslateConfig",
-                "-module-cache-path", str(relative / "module-cache"),
-                "-debug-prefix-map", str(ROOT) + "=.", "-file-compilation-dir", ".",
-                "config_window.swift", "-o", str(target),
-            ], cwd=ROOT, check=True)
-            objects.append(str(target))
-        output = relative / "config_window"
-        subprocess.run(["xcrun", "lipo", "-create", *objects, "-output", str(output)], cwd=ROOT, check=True)
-        subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(output)],
-                       cwd=ROOT, check=True, capture_output=True)
-        content = (ROOT / output).read_bytes()
-        if any(str(path).encode() in content for path in (ROOT, Path.home())):
-            raise ValueError("窗口程序包含本机路径，拒绝打包")
-        (ROOT / output).chmod(0o755)
-        (ROOT / output).replace(ROOT / "config_window")
 
 
 def build() -> Path:
@@ -66,7 +34,6 @@ def build() -> Path:
             raise ValueError("原生面板不得预填密钥、代理地址或本机解释器路径")
     if any(metadata.get("variables", {}).get(name) for name in private_variables):
         raise ValueError("发行环境变量不得包含私有值")
-    build_native_window()
     files = [ROOT / name for name in RUNTIME_FILES]
     files.extend(sorted((ROOT / "adapters").glob("*.py")))
     output = ROOT / "dist" / "MultiTranslate.alfredworkflow"
@@ -77,7 +44,7 @@ def build() -> Path:
                 raise ValueError("打包清单包含缺失文件或符号链接")
             info = zipfile.ZipInfo(path.relative_to(ROOT).as_posix(), (2026, 11, 5, 0, 0, 0))
             info.create_system = 3
-            info.external_attr = (0o100755 if path.name in ("bootstrap.sh", "config_window") else 0o100644) << 16
+            info.external_attr = (0o100755 if path.name == "bootstrap.sh" else 0o100644) << 16
             archive.writestr(info, path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED)
     return output
 

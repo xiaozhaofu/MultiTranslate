@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from models import LANGUAGES
 
 BUNDLE_ID = "local.multitranslate.alfred"
-VERSION = "1.6.2"
+VERSION = "1.6.3"
 ROOT = Path(__file__).resolve().parent
 
 
@@ -39,36 +39,34 @@ def ensure_config(data_dir: Path) -> Path:
     return path
 
 
-def _panel_checkbox(name: str, default: bool = False, *, environment: dict | None = None) -> bool:
-    source = os.environ if environment is None else environment
-    value = source.get(name, "1" if default else "0")
+def _panel_checkbox(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name, "1" if default else "0")
     if value not in ("0", "1"):
         raise ConfigError(f"面板字段 {name} 无效，请重新保存 Workflow 配置")
     return value == "1"
 
 
-def _panel_values(defaults: dict, environment: dict | None = None) -> dict:
-    source = os.environ if environment is None else environment
-    engine = source.get("MT_DEFAULT_ENGINE", defaults["default_engine"]).strip()
+def _panel_values(defaults: dict) -> dict:
+    engine = os.environ.get("MT_DEFAULT_ENGINE", defaults["default_engine"]).strip()
     if engine not in defaults["engines"]:
         raise ConfigError("请在 Workflow 配置中选择有效的默认服务商")
-    order = source.get("MT_FALLBACK_ORDER", ",".join(defaults["fallback_order"]))
+    order = os.environ.get("MT_FALLBACK_ORDER", ",".join(defaults["fallback_order"]))
     values = {
         "default_engine": engine,
-        "fallback_enable": _panel_checkbox("MT_FALLBACK_ENABLED", True, environment=source),
+        "fallback_enable": _panel_checkbox("MT_FALLBACK_ENABLED", True),
         "fallback_order": [name.strip() for name in order.split(",") if name.strip()],
-        "proxy": {"mode": source.get("MT_PROXY_MODE", "system").strip(),
-                  "url": source.get("MT_PROXY_URL", "").strip()},
+        "proxy": {"mode": os.environ.get("MT_PROXY_MODE", "system").strip(),
+                  "url": os.environ.get("MT_PROXY_URL", "").strip()},
         "engines": {},
     }
     if any(name not in defaults["engines"] for name in values["fallback_order"]):
         raise ConfigError("面板兜底顺序仅支持 " + "、".join(defaults["engines"]))
     for name, fields in defaults["engines"].items():
         prefix = f"MT_{name.upper()}_"
-        settings = {"enable": _panel_checkbox(prefix + "ENABLED", environment=source)}
+        settings = {"enable": _panel_checkbox(prefix + "ENABLED")}
         for field, default in fields.items():
             if field != "enable":
-                settings[field] = source.get(prefix + field.upper(), default).strip()
+                settings[field] = os.environ.get(prefix + field.upper(), default).strip()
         values["engines"][name] = settings
     return values
 
@@ -104,15 +102,6 @@ def load_json_config(path: Path) -> dict:
     """导入只读取已存在的 JSON；忽略面板开关，不创建或改写用户文件。"""
     defaults = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
     return _validate_config(_json_values(path), defaults)
-
-
-def validate_panel_values(values: dict) -> dict:
-    """校验独立窗口提交的值，不修改进程环境或用户文件。"""
-    environment = {key: ("1" if value else "0") if type(value) is bool else value
-                   for key, value in values.items()}
-    _panel_checkbox("MT_USE_PANEL", environment=environment)
-    defaults = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
-    return _validate_config(_panel_values(defaults, environment), defaults)
 
 
 def _validate_config(values: dict, defaults: dict) -> dict:

@@ -1076,9 +1076,6 @@ class OutputAndEntryTests(LocalFiles):
         importer = patch("main.import_json_to_panel", return_value=False)
         self.importer = importer.start()
         self.addCleanup(importer.stop)
-        window = patch("main.open_window", return_value="cancelled")
-        self.window = window.start()
-        self.addCleanup(window.stop)
 
     def environment(self):
         return {**os.environ, "alfred_workflow_data": str(self.path / "data"),
@@ -1112,32 +1109,37 @@ class OutputAndEntryTests(LocalFiles):
             self.assertEqual(process.stderr, "")
         self.assertFalse((self.path / "cache" / "translations.json").exists())
 
-    def test_configure_imports_before_opening_independent_window(self):
+    def test_configure_imports_before_opening_native_panel(self):
         order = []
         self.importer.side_effect = lambda directory: order.append("import") or True
-        self.window.side_effect = lambda note: order.append("open") or "saved"
-        with patch.dict(os.environ, self.environment()):
+        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
+            opened.side_effect = lambda *args, **kwargs: order.append("open")
             result = run(["configure"])
         self.assertEqual(order, ["import", "open"])
         self.importer.assert_called_once_with(self.path / "data")
-        self.assertIn("已从 JSON 导入", self.window.call_args.args[0])
-        self.assertEqual(result["items"][0]["title"], "设置已保存")
+        command = opened.call_args.args[0]
+        self.assertEqual(command[:2], ["osascript", "-e"])
+        self.assertIn(f'reveal workflow "{BUNDLE_ID}" configuration true', command[2])
+        self.assertEqual(opened.call_args.kwargs["timeout"], 10)
+        self.assertIn("已从 JSON 导入", result["items"][0]["subtitle"])
+        self.assertIn("配置面板", result["items"][0]["title"])
 
     def test_failed_import_still_opens_panel_with_safe_reason(self):
         self.importer.side_effect = ConfigError("自动导入未完成，原 JSON 保留")
-        with patch.dict(os.environ, self.environment()):
+        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
             result = run(["configure"])
-        self.assertEqual(result["items"][0]["title"], "已关闭设置窗口")
-        self.assertIn("原 JSON 保留", self.window.call_args.args[0])
-        self.window.assert_called_once()
+        self.assertIn("配置面板", result["items"][0]["title"])
+        self.assertIn("原 JSON 保留", result["items"][0]["subtitle"])
+        opened.assert_called_once()
 
     def test_native_configuration_remains_available(self):
         with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
+            run(["configure"])
             run(["configure-native"])
         command = opened.call_args.args[0]
         self.assertEqual(command[:2], ["osascript", "-e"])
         self.assertIn(f'reveal workflow "{BUNDLE_ID}" configuration true', command[2])
-        self.window.assert_not_called()
+        self.assertEqual(opened.call_args_list[0], opened.call_args_list[1])
 
     def test_configure_json_only_opens_the_private_file(self):
         with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
@@ -1147,10 +1149,10 @@ class OutputAndEntryTests(LocalFiles):
         self.importer.assert_not_called()
 
     def test_configure_failure_returns_safe_guidance(self):
-        with patch.dict(os.environ, self.environment()), patch("main.open_window", side_effect=ConfigError("请使用 trconfig-native 或 trconfig-json")):
+        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run", side_effect=subprocess.TimeoutExpired("fixture", 10)):
             result = run(["configure"])
         self.assertFalse(result["items"][0]["valid"])
-        self.assertIn("trconfig-native", result["items"][0]["subtitle"])
+        self.assertIn("Configure Workflow", result["items"][0]["subtitle"])
 
     def test_native_panel_applescript_compiles_without_execution(self):
         compiler = shutil.which("osacompile")

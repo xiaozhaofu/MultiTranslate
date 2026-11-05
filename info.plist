@@ -7,11 +7,11 @@
 	<key>name</key>
 	<string>MultiTranslate 多引擎翻译</string>
 	<key>version</key>
-	<string>1.6.2</string>
+	<string>1.6.3</string>
 	<key>createdby</key>
 	<string>MultiTranslate</string>
 	<key>description</key>
-	<string>五引擎翻译；trconfig 打开独立配置窗口，支持全局及厂商代理。</string>
+	<string>五引擎翻译；使用 Alfred 原生面板配置，支持全局及厂商代理。</string>
 	<key>disabled</key>
 	<false/>
 	<key>category</key>
@@ -155,7 +155,7 @@
 				<key>title</key>
 				<string>配置翻译服务商</string>
 				<key>subtext</key>
-				<string>打开独立配置窗口，设置翻译服务商与代理</string>
+				<string>打开 Alfred 原生面板，设置翻译服务商与代理</string>
 				<key>argumenttype</key>
 				<integer>2</integer>
 				<key>withspace</key>
@@ -197,7 +197,7 @@
 				<key>title</key>
 				<string>编辑 JSON 配置（备用）</string>
 				<key>subtext</key>
-				<string>关闭使用窗口配置后，JSON 设置生效</string>
+				<string>关闭使用此面板配置后，JSON 设置生效</string>
 				<key>argumenttype</key>
 				<integer>2</integer>
 				<key>withspace</key>
@@ -237,9 +237,9 @@
 				<key>keyword</key>
 				<string>trconfig-native</string>
 				<key>title</key>
-				<string>打开原生配置面板（备用）</string>
+				<string>配置翻译服务商（兼容命令）</string>
 				<key>subtext</key>
-				<string>保留 Alfred 自带配置入口</string>
+				<string>与 trconfig 相同，打开 Alfred 原生配置面板</string>
 				<key>argumenttype</key>
 				<integer>2</integer>
 				<key>withspace</key>
@@ -269,9 +269,11 @@
 		</dict>
 	</array>
 	<key>readme</key>
-	<string>在 Alfred 输入 trconfig 打开独立 macOS 配置窗口。各厂商之间使用横跨表单的原生分割线，填写密钥和代理后保存。窗口与 Alfred 原生面板共享配置；勾选“使用窗口配置”后生效，关闭时继续使用原 JSON。
+	<string>在 Workflows 中选中本工作流，点击 Configure Workflow… 打开 Alfred 原生配置面板；也可输入 trconfig。首次运行 trconfig 会从已有 JSON 导入尚未设置的字段。
 
-trconfig-native 打开原生面板；trconfig-json 编辑 JSON。现有密钥、代理、自动中英互译、手动 set:、all:、兜底和缓存保持支持。</string>
+勾选“使用此面板配置”后，面板中的厂商、密钥和代理设置生效；关闭时继续使用原 JSON。trconfig-native 是兼容别名，trconfig-json 编辑 JSON。
+
+已移除独立设置窗口，原有配置继续保留。厂商识别图标、自动中英互译、手动 set:、all:、兜底和缓存功能不变。</string>
 	<key>variables</key>
 	<dict>
 		<key>PYTHON_BINARY</key>
@@ -332,7 +334,7 @@ trconfig-native 打开原生面板；trconfig-json 编辑 JSON。现有密钥、
 				<key>required</key>
 				<false/>
 				<key>text</key>
-				<string>使用窗口配置</string>
+				<string>使用此面板配置</string>
 			</dict>
 		</dict>
 		<dict>
