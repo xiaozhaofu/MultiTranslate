@@ -1,6 +1,6 @@
 # MultiTranslate 多引擎翻译
 
-Alfred 5 文本翻译 Workflow，支持火山引擎、百度、阿里云、微软 Azure 和有道。1.6.0 新增独立 macOS 配置窗口，厂商之间使用横贯左右的分割线，密钥默认隐藏。保留全局代理与厂商覆盖、已有 JSON 一次导入、自动中英互译及手动 `set:` 优先。
+Alfred 5 文本翻译 Workflow，支持火山引擎、百度、阿里云、微软 Azure 和有道。1.6.1 增加“文 / A + 双向箭头”翻译图标；保留独立 macOS 配置窗口、厂商间全宽分割线及密钥默认隐藏。全局代理与厂商覆盖、已有 JSON 一次导入、自动中英互译及手动 `set:` 优先继续支持。
 
 需要 Alfred Powerpack 和 Python 3.10+。翻译及配置后端只使用 Python 标准库，无 pip 依赖；独立窗口使用系统 AppKit，安装包附带 Intel / Apple Silicon 通用程序，日常使用不需要 Swift 编译器。独立窗口要求 macOS 11+；更早系统仍可使用原生配置面板或 JSON 入口。
 
@@ -249,6 +249,7 @@ adapters/
   volc.py / baidu.py / aliyun.py / azure.py / youdao.py
 bootstrap.sh            解释器检查与 argv 透传
 info.plist              已连好的 Alfred 对象
+icon.svg / icon.png     翻译图标矢量源及 1024 像素透明背景图
 build_workflow.py       编译原生窗口并按白名单打包
 tests/                  离线功能验证
 VALIDATION.md           实际验证记录及未验证范围

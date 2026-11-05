@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">MultiTranslate：文与 A 双向翻译</title>
+  <defs>
+    <linearGradient id="tile" x1="48" y1="32" x2="456" y2="488" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2977EA"/>
+      <stop offset="1" stop-color="#1356CF"/>
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#tile)"/>
+  <rect x="25" y="25" width="462" height="462" rx="107" fill="none" stroke="#FFFFFF" stroke-opacity=".12" stroke-width="2"/>
+  <!-- 汉字和字母均使用矢量路径，渲染不依赖用户安装的字体。 -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M170 101 L189 120 M106 146 H260"/>
+    <path d="M235 147 C215 205 163 240 105 266"/>
+    <path d="M140 166 C164 214 206 247 262 264"/>
+  </g>
+  <path fill="#FFFFFF" fill-rule="evenodd" d="M319 267 H349 L411 417 H378 L364 379 H305 L291 417 H259 Z M314 352 H354 L334 298 Z"/>
+  <!-- 两个反向箭头表示中英互译，也保持小尺寸下的独立轮廓。 -->
+  <g fill="none" stroke="#D6EEFF" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M310 108 H349 Q404 108 404 165 V211 M376 187 L404 215 L432 187"/>
+    <path d="M208 404 H167 Q108 404 108 349 V300 M80 324 L108 296 L136 324"/>
+  </g>
+</svg>

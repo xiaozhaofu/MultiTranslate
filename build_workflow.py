@@ -14,6 +14,7 @@ RUNTIME_FILES = (
     "main.py", "config.py", "panel_import.py", "models.py", "parser.py", "scheduler.py", "cache.py",
     "http_client.py", "output.py", "utils.py", "bootstrap.sh", "config.example.json",
     "info.plist", "README.md", "settings_window.py", "config_window.swift", "config_window",
+    "icon.png", "icon.svg",
 )
 
 
