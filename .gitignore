@@ -2,3 +2,4 @@
 .Ds_Store
 *.md
 !README.md
+prefs.plist

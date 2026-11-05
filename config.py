@@ -1,4 +1,4 @@
-"""配置仅写入用户数据目录，绝不改写安装包内模板。"""
+"""隔离读取原生面板与 JSON 配置，保留用户 JSON 原文。"""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 from models import LANGUAGES
 
 BUNDLE_ID = "local.multitranslate.alfred"
-VERSION = "1.1.0"
+VERSION = "1.4.0"
 ROOT = Path(__file__).resolve().parent
 
 
@@ -38,17 +38,70 @@ def ensure_config(data_dir: Path) -> Path:
     return path
 
 
-def load_config(data_dir: Path) -> dict:
+def _panel_checkbox(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name, "1" if default else "0")
+    if value not in ("0", "1"):
+        raise ConfigError(f"面板字段 {name} 无效，请重新保存 Workflow 配置")
+    return value == "1"
+
+
+def _panel_values(defaults: dict) -> dict:
+    engine = os.environ.get("MT_DEFAULT_ENGINE", defaults["default_engine"]).strip()
+    if engine not in defaults["engines"]:
+        raise ConfigError("请在 Workflow 配置中选择有效的默认服务商")
+    order = os.environ.get("MT_FALLBACK_ORDER", ",".join(defaults["fallback_order"]))
+    values = {
+        "default_engine": engine,
+        "fallback_enable": _panel_checkbox("MT_FALLBACK_ENABLED", True),
+        "fallback_order": [name.strip() for name in order.split(",") if name.strip()],
+        "engines": {},
+    }
+    if any(name not in defaults["engines"] for name in values["fallback_order"]):
+        raise ConfigError("面板兜底顺序仅支持 " + "、".join(defaults["engines"]))
+    for name, fields in defaults["engines"].items():
+        prefix = f"MT_{name.upper()}_"
+        settings = {"enable": _panel_checkbox(prefix + "ENABLED")}
+        for field, default in fields.items():
+            if field != "enable":
+                settings[field] = os.environ.get(prefix + field.upper(), default).strip()
+        values["engines"][name] = settings
+    return values
+
+
+def _json_values(path: Path) -> dict:
     try:
-        path = ensure_config(data_dir)
-        if path.stat().st_size > 1024 * 1024:
-            raise ConfigError("config.json 过大，请运行 trconfig 检查")
-        values = json.loads(path.read_text(encoding="utf-8"))
+        with path.open("rb") as file:
+            content = file.read(1024 * 1024 + 1)
+        if len(content) > 1024 * 1024:
+            raise ConfigError("config.json 过大，请运行 trconfig-json 检查")
+        values = json.loads(content.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ConfigError("无法读取 config.json，请运行 trconfig 检查 JSON 格式和权限") from exc
+        raise ConfigError("无法读取 config.json，请运行 trconfig-json 检查格式和权限") from exc
     if not isinstance(values, dict):
         raise ConfigError("config.json 顶层必须是对象")
+    return values
+
+
+def load_config(data_dir: Path) -> dict:
     defaults = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+    # 显式切换来源，避免面板空密钥意外继续使用 JSON 中的另一组凭据。
+    if _panel_checkbox("MT_USE_PANEL"):
+        values = _panel_values(defaults)
+    else:
+        try:
+            values = _json_values(ensure_config(data_dir))
+        except OSError as exc:
+            raise ConfigError("无法读取 config.json，请运行 trconfig-json 检查格式和权限") from exc
+    return _validate_config(values, defaults)
+
+
+def load_json_config(path: Path) -> dict:
+    """导入只读取已存在的 JSON；忽略面板开关，不创建或改写用户文件。"""
+    defaults = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
+    return _validate_config(_json_values(path), defaults)
+
+
+def _validate_config(values: dict, defaults: dict) -> dict:
     config = {**defaults, **values}
     for key in ("fallback_enable", "cache_enabled", "log_enabled"):
         if type(config[key]) is not bool:

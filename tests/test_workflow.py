@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import hmac
 import json
 import os
 import plistlib
 import queue
 import secrets
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,12 +29,15 @@ from adapters.aliyun import Adapter as Aliyun
 from adapters.azure import Adapter as Azure
 from adapters.baidu import Adapter as Baidu
 from adapters.volc import Adapter as Volc
+from adapters.youdao import Adapter as Youdao
+from build_workflow import build
 from cache import TranslationCache
 from config import BUNDLE_ID, ROOT, ConfigError, ensure_config, load_config
 from http_client import HttpResponse, TransportError, send
 from main import configure_logging, run
 from models import TranslationRequest, TranslationResult, failure
 from output import format_results
+from panel_import import MARKER, MARKER_CONTENT, LOCK, _atomic_write, _read_preferences, _reload_workflow, import_json_to_panel
 from parser import Query, QueryError, parse_query
 from scheduler import Scheduler
 
@@ -43,11 +48,16 @@ def settings(engine):
             "sk": hashlib.sha256(b"fixture signing material").hexdigest(),
             "appid": hashlib.sha256(b"fixture application").hexdigest(),
             "appkey": hashlib.sha256(b"fixture application material").hexdigest(),
+            "app_key": secrets.token_hex(12), "app_secret": secrets.token_hex(16),
             "key": secrets.token_hex(16), "region": "cn-north-1" if engine == "volc" else "cn-hangzhou"}
 
 
 class LocalFiles(unittest.TestCase):
     def setUp(self):
+        clean_environment = {key: value for key, value in os.environ.items() if not key.startswith("MT_")}
+        environment = patch.dict(os.environ, clean_environment, clear=True)
+        environment.start()
+        self.addCleanup(environment.stop)
         self.directory = tempfile.TemporaryDirectory(prefix=".verification-", dir=ROOT)
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name)
@@ -113,6 +123,17 @@ class ParserTests(unittest.TestCase):
 
 
 class ConfigTests(LocalFiles):
+    def test_youdao_defaults_and_existing_json_compatibility(self):
+        self.assertEqual(self.config["engines"]["youdao"],
+                         {"enable": False, "app_key": "", "app_secret": ""})
+        del self.config["engines"]["youdao"]
+        self.config["fallback_order"].remove("youdao")
+        path = self.path / "data" / "config.json"
+        original = json.dumps(self.config).encode()
+        path.write_bytes(original)
+        self.assertNotIn("youdao", load_config(path.parent)["engines"])
+        self.assertEqual(path.read_bytes(), original)
+
     def test_created_private_and_never_overwritten(self):
         path = ensure_config(self.path / "data")
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
@@ -137,17 +158,393 @@ class ConfigTests(LocalFiles):
                     load_config(self.path / "data")
 
 
+class PanelConfigTests(LocalFiles):
+    def setUp(self):
+        super().setUp()
+        self.metadata = plistlib.loads((ROOT / "info.plist").read_bytes())
+
+    def panel_environment(self, **overrides):
+        values = {}
+        for field in self.metadata["userconfigurationconfig"]:
+            default = field["config"]["default"]
+            values[field["variable"]] = ("1" if default else "0") if type(default) is bool else str(default)
+        values["MT_USE_PANEL"] = "1"
+        values.update(overrides)
+        return values
+
+    def test_native_defaults_match_fields_without_creating_json(self):
+        directory = self.path / "native-only"
+        with patch.dict(os.environ, self.panel_environment()):
+            config = load_config(directory)
+        self.assertFalse(directory.exists())
+        self.assertEqual(config["default_engine"], "volc")
+        self.assertTrue(config["fallback_enable"])
+        self.assertFalse(any(value["enable"] for value in config["engines"].values()))
+        self.assertEqual(config["engines"]["volc"]["region"], "cn-north-1")
+        self.assertEqual(config["engines"]["aliyun"]["region"], "cn-hangzhou")
+        self.assertEqual(config["engines"]["azure"]["region"], "")
+
+    def test_every_provider_field_is_read_and_trimmed(self):
+        environment = self.panel_environment(MT_DEFAULT_ENGINE="aliyun", MT_FALLBACK_ENABLED="0",
+                                             MT_FALLBACK_ORDER=" aliyun, baidu, azure, volc ")
+        expected = {}
+        for engine, values in self.config["engines"].items():
+            environment[f"MT_{engine.upper()}_ENABLED"] = "1"
+            expected[engine] = {"enable": True}
+            for field in values:
+                if field != "enable":
+                    value = secrets.token_hex(8)
+                    environment[f"MT_{engine.upper()}_{field.upper()}"] = " " + value + " "
+                    expected[engine][field] = value
+        with patch.dict(os.environ, environment):
+            config = load_config(self.path / "data")
+        self.assertEqual(config["engines"], expected)
+        self.assertEqual(config["default_engine"], "aliyun")
+        self.assertFalse(config["fallback_enable"])
+        self.assertEqual(config["fallback_order"], ["aliyun", "baidu", "azure", "volc"])
+
+    def test_zero_checkbox_is_disabled(self):
+        with patch.dict(os.environ, self.panel_environment(MT_AZURE_ENABLED="0", MT_VOLC_ENABLED="1")):
+            config = load_config(self.path / "data")
+        self.assertFalse(config["engines"]["azure"]["enable"])
+        self.assertTrue(config["engines"]["volc"]["enable"])
+
+    def test_json_mode_ignores_panel_values_and_is_not_overwritten(self):
+        path = self.path / "data" / "config.json"
+        self.config["default_engine"] = "baidu"
+        self.config["engines"]["baidu"] = settings("baidu")
+        before = json.dumps(self.config).encode()
+        path.write_bytes(before)
+        with patch.dict(os.environ, self.panel_environment(MT_USE_PANEL="0", MT_DEFAULT_ENGINE="aliyun",
+                                                           MT_BAIDU_ENABLED="invalid")):
+            config = load_config(path.parent)
+        self.assertEqual(config["default_engine"], "baidu")
+        self.assertEqual(config["engines"]["baidu"]["appkey"], self.config["engines"]["baidu"]["appkey"])
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_bad_json_does_not_block_panel_mode(self):
+        path = self.path / "data" / "config.json"
+        path.write_text("invalid json", encoding="utf-8")
+        with patch.dict(os.environ, self.panel_environment()):
+            self.assertEqual(load_config(path.parent)["default_engine"], "volc")
+        self.assertEqual(path.read_text(), "invalid json")
+
+    def test_cleared_panel_key_does_not_reuse_json_credentials(self):
+        path = self.path / "data" / "config.json"
+        self.config["engines"]["aliyun"] = settings("aliyun")
+        before = json.dumps(self.config).encode()
+        path.write_bytes(before)
+        environment = self.panel_environment(MT_DEFAULT_ENGINE="aliyun", MT_ALIYUN_ENABLED="1",
+                                             MT_ALIYUN_AK=secrets.token_hex(8), MT_ALIYUN_SK="")
+        with patch.dict(os.environ, environment):
+            config = load_config(path.parent)
+        self.assertEqual(config["engines"]["aliyun"]["sk"], "")
+        self.assertEqual(Aliyun(config["engines"]["aliyun"]).validate(TranslationRequest("hello")).error_code, "config")
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_panel_validation_rejects_unknown_values(self):
+        for name, value in (("MT_USE_PANEL", "false"), ("MT_FALLBACK_ENABLED", "yes"),
+                            ("MT_AZURE_ENABLED", "True"), ("MT_DEFAULT_ENGINE", "unknown"),
+                            ("MT_FALLBACK_ORDER", "azure,unknown")):
+            with self.subTest(name=name), patch.dict(os.environ, self.panel_environment(**{name: value})):
+                with self.assertRaises(ConfigError):
+                    load_config(self.path / "data")
+
+    def test_empty_fallback_order_is_allowed(self):
+        with patch.dict(os.environ, self.panel_environment(MT_FALLBACK_ORDER="")):
+            self.assertEqual(load_config(self.path / "data")["fallback_order"], [])
+
+    def test_form_fields_and_private_defaults(self):
+        fields = self.metadata["userconfigurationconfig"]
+        variables = [field["variable"] for field in fields]
+        self.assertEqual(len(variables), len(set(variables)))
+        for field in fields:
+            self.assertIn(field["type"], ("textfield", "checkbox", "popupbutton"))
+            self.assertIn(field["variable"], self.metadata["variablesdontexport"])
+            if field["type"] == "checkbox":
+                self.assertIs(type(field["config"]["default"]), bool)
+            elif field["type"] == "textfield":
+                self.assertFalse(field["config"]["required"])
+            else:
+                self.assertIn(field["config"]["default"], [pair[1] for pair in field["config"]["pairs"]])
+        private = [field for field in fields if field["variable"].endswith(("_AK", "_SK", "_KEY", "_APPID", "_APPKEY", "_APP_SECRET"))]
+        self.assertEqual(len(private), 9)
+        self.assertTrue(all(field["config"]["default"] == "" for field in private))
+        self.assertIn("prefs.plist", (ROOT / ".gitignore").read_text().splitlines())
+
+    def test_builder_rejects_embedded_panel_secret(self):
+        metadata = self.metadata
+        next(field for field in metadata["userconfigurationconfig"] if field["variable"] == "MT_AZURE_KEY")["config"]["default"] = secrets.token_hex(8)
+        with patch("build_workflow.plistlib.loads", return_value=metadata):
+            with self.assertRaisesRegex(ValueError, "不得预填"):
+                build()
+
+    def test_youdao_is_selectable_and_private_fields_are_bound(self):
+        fields = {field["variable"]: field for field in self.metadata["userconfigurationconfig"]}
+        self.assertIn(["有道翻译", "youdao"], fields["MT_DEFAULT_ENGINE"]["config"]["pairs"])
+        environment = self.panel_environment(MT_DEFAULT_ENGINE="youdao", MT_YOUDAO_ENABLED="1",
+                                             MT_YOUDAO_APP_KEY=" fixture-id ", MT_YOUDAO_APP_SECRET=" fixture-secret ")
+        with patch.dict(os.environ, environment):
+            config = load_config(self.path / "data")
+        self.assertEqual(config["engines"]["youdao"],
+                         {"enable": True, "app_key": "fixture-id", "app_secret": "fixture-secret"})
+        self.assertEqual(config["default_engine"], "youdao")
+
+    def test_builder_rejects_youdao_template_credentials(self):
+        for key in ("app_key", "app_secret"):
+            with self.subTest(key=key):
+                self.config["engines"]["youdao"][key] = secrets.token_hex(10)
+                with patch("build_workflow.json.loads", return_value=self.config):
+                    with self.assertRaisesRegex(ValueError, "不得包含凭据"):
+                        build()
+                self.config["engines"]["youdao"][key] = ""
+
+
+class PanelImportTests(LocalFiles):
+    def setUp(self):
+        super().setUp()
+        self.data = self.path / "data"
+        self.source = self.data / "config.json"
+        self.panel = self.path / "panel-data"
+        self.panel.mkdir()
+        self.preferences = self.panel / "prefs.plist"
+        reloader = patch("panel_import._reload_workflow")
+        self.reload = reloader.start()
+        self.addCleanup(reloader.stop)
+
+    def save_source(self):
+        self.source.write_text(json.dumps(self.config, ensure_ascii=False), encoding="utf-8")
+        return self.source.read_bytes()
+
+    def test_import_round_trip_all_fields_without_changing_json_or_mode(self):
+        self.config["default_engine"] = "aliyun"
+        self.config["fallback_enable"] = False
+        self.config["fallback_order"] = ["aliyun", "azure"]
+        for i, values in enumerate(self.config["engines"].values()):
+            values["enable"] = i % 2 == 0
+            for field in values:
+                if field != "enable":
+                    values[field] = secrets.token_hex(10) + '\n特殊字符 " \\ & $()'
+        original = self.save_source()
+        with patch.dict(os.environ, {"MT_USE_PANEL": "1", "MT_DEFAULT_ENGINE": "azure"}):
+            self.assertTrue(import_json_to_panel(self.data, self.panel))
+        saved = plistlib.loads(self.preferences.read_bytes())
+        self.assertNotIn("MT_USE_PANEL", saved)
+        self.assertNotIn("PYTHON_BINARY", saved)
+        environment = {key: ("1" if value else "0") if type(value) is bool else value
+                       for key, value in saved.items()}
+        with patch.dict(os.environ, {**environment, "MT_USE_PANEL": "1"}):
+            loaded = load_config(self.data)
+        for key in ("default_engine", "fallback_enable", "fallback_order", "engines"):
+            self.assertEqual(loaded[key], self.config[key])
+        self.assertEqual(self.source.read_bytes(), original)
+        self.assertEqual((self.data / MARKER).read_bytes(), MARKER_CONTENT)
+        self.assertEqual(self.preferences.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.data / MARKER).stat().st_mode & 0o777, 0o600)
+        self.reload.assert_called_once_with()
+
+    def test_saved_values_including_empty_and_false_are_preserved(self):
+        existing = {"MT_USE_PANEL": False, "MT_DEFAULT_ENGINE": "baidu", "MT_AZURE_KEY": "",
+                    "MT_ALIYUN_ENABLED": False, "PYTHON_BINARY": "fixture-python",
+                    "unrelated": {"nested": 7}}
+        self.preferences.write_bytes(plistlib.dumps(existing))
+        self.config["engines"]["azure"]["key"] = secrets.token_hex(8)
+        self.save_source()
+        self.assertTrue(import_json_to_panel(self.data, self.panel))
+        saved = plistlib.loads(self.preferences.read_bytes())
+        for key, value in existing.items():
+            self.assertEqual(saved[key], value)
+        self.assertEqual(saved["MT_VOLC_REGION"], "cn-north-1")
+
+    def test_deleted_engine_stays_disabled_and_keeps_native_field_defaults(self):
+        self.config["engines"].pop("volc")
+        self.save_source()
+        self.assertTrue(import_json_to_panel(self.data, self.panel))
+        saved = plistlib.loads(self.preferences.read_bytes())
+        self.assertIs(saved["MT_VOLC_ENABLED"], False)
+        self.assertNotIn("MT_VOLC_REGION", saved)
+
+    def test_completed_import_does_not_refill_deleted_values_or_read_bad_json(self):
+        import_json_to_panel(self.data, self.panel)
+        saved = plistlib.loads(self.preferences.read_bytes())
+        del saved["MT_AZURE_KEY"]
+        self.preferences.write_bytes(plistlib.dumps(saved))
+        original = self.preferences.read_bytes()
+        self.source.write_text("invalid json", encoding="utf-8")
+        self.reload.reset_mock()
+        self.assertFalse(import_json_to_panel(self.data, self.panel))
+        self.assertEqual(self.preferences.read_bytes(), original)
+        self.reload.assert_not_called()
+
+    def test_missing_source_creates_nothing(self):
+        missing = self.path / "no-data"
+        self.assertFalse(import_json_to_panel(missing, self.panel))
+        self.assertFalse(missing.exists())
+        self.assertFalse(self.preferences.exists())
+        self.reload.assert_not_called()
+
+    def test_invalid_source_and_unsupported_engine_leave_preferences_untouched(self):
+        original = plistlib.dumps({"MT_USE_PANEL": True})
+        self.preferences.write_bytes(original)
+        for contents in ('broken', '{"engines": []}', '{"fallback_enable": "false"}',
+                         '{"default_engine":"extra"}', '{"engines":{"extra":{"enable":true}}}'):
+            with self.subTest(contents=contents):
+                self.source.write_text(contents, encoding="utf-8")
+                with self.assertRaises(ConfigError):
+                    import_json_to_panel(self.data, self.panel)
+                self.assertEqual(self.preferences.read_bytes(), original)
+                self.assertFalse((self.data / MARKER).exists())
+        self.reload.assert_not_called()
+
+    def test_bad_preferences_are_not_replaced(self):
+        for original in (b"bad plist", b"<plist>", plistlib.dumps(["not", "a dict"])):
+            with self.subTest(original=original):
+                self.preferences.write_bytes(original)
+                with self.assertRaises(ConfigError):
+                    import_json_to_panel(self.data, self.panel)
+                self.assertEqual(self.preferences.read_bytes(), original)
+                self.assertFalse((self.data / MARKER).exists())
+        self.reload.assert_not_called()
+
+    def test_symlink_preferences_are_not_followed(self):
+        target = self.panel / "untouched.plist"
+        original = plistlib.dumps({"MT_DEFAULT_ENGINE": "baidu"})
+        target.write_bytes(original)
+        self.preferences.symlink_to(target.name)
+        with self.assertRaisesRegex(ConfigError, "符号链接"):
+            import_json_to_panel(self.data, self.panel)
+        self.assertEqual(target.read_bytes(), original)
+        self.reload.assert_not_called()
+
+    def test_busy_import_lock_does_not_change_files(self):
+        with (self.data / LOCK).open("wb") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(ConfigError, "尚未完成"):
+                import_json_to_panel(self.data, self.panel)
+        self.assertFalse(self.preferences.exists())
+        self.assertFalse((self.data / MARKER).exists())
+
+    def test_atomic_replace_failure_retains_original_and_cleans_temporary_data(self):
+        original = plistlib.dumps({"MT_DEFAULT_ENGINE": "baidu"})
+        self.preferences.write_bytes(original)
+        with patch("panel_import.os.replace", side_effect=OSError("fixture failure")):
+            with self.assertRaises(ConfigError):
+                import_json_to_panel(self.data, self.panel)
+        self.assertEqual(self.preferences.read_bytes(), original)
+        self.assertEqual(list(self.path.rglob(".panel-import-*")), [])
+        self.assertFalse((self.data / MARKER).exists())
+        self.reload.assert_not_called()
+
+    def test_reload_failure_restores_exact_bytes_or_absence(self):
+        for original in (plistlib.dumps({"MT_DEFAULT_ENGINE": "baidu"}, fmt=plistlib.FMT_BINARY), None):
+            with self.subTest(existed=original is not None):
+                if original is not None:
+                    self.preferences.write_bytes(original)
+                    self.preferences.chmod(0o640)
+                else:
+                    self.preferences.unlink(missing_ok=True)
+                self.reload.reset_mock()
+                self.reload.side_effect = [subprocess.TimeoutExpired("fixture", 10), None]
+                with self.assertRaisesRegex(ConfigError, "面板已恢复"):
+                    import_json_to_panel(self.data, self.panel)
+                if original is not None:
+                    self.assertEqual(self.preferences.read_bytes(), original)
+                    self.assertEqual(self.preferences.stat().st_mode & 0o777, 0o640)
+                else:
+                    self.assertFalse(self.preferences.exists())
+                self.assertFalse((self.data / MARKER).exists())
+                self.assertEqual(self.reload.call_count, 2)
+
+    def test_marker_failure_restores_preferences(self):
+        original = plistlib.dumps({"MT_USE_PANEL": False})
+        self.preferences.write_bytes(original)
+        def write(path, content, mode=0o600):
+            if path.name == MARKER:
+                raise PermissionError("fixture marker failure")
+            return _atomic_write(path, content, mode)
+        with patch("panel_import._atomic_write", side_effect=write):
+            with self.assertRaisesRegex(ConfigError, "面板已恢复"):
+                import_json_to_panel(self.data, self.panel)
+        self.assertEqual(self.preferences.read_bytes(), original)
+        self.assertFalse((self.data / MARKER).exists())
+        self.assertEqual(self.reload.call_count, 2)
+
+    def test_rollback_failure_is_reported_and_source_is_preserved(self):
+        self.preferences.write_bytes(plistlib.dumps({"MT_USE_PANEL": False}))
+        source = self.source.read_bytes()
+        calls = []
+        def write(path, content, mode=0o600):
+            calls.append(path)
+            if len(calls) == 2:
+                raise PermissionError("fixture rollback failure")
+            return _atomic_write(path, content, mode)
+        self.reload.side_effect = subprocess.TimeoutExpired("fixture", 10)
+        with patch("panel_import._atomic_write", side_effect=write):
+            with self.assertRaisesRegex(ConfigError, "恢复未完成"):
+                import_json_to_panel(self.data, self.panel)
+        self.assertEqual(self.source.read_bytes(), source)
+        self.assertFalse((self.data / MARKER).exists())
+
+    def test_concurrent_change_before_replace_is_preserved(self):
+        changed = plistlib.dumps({"MT_DEFAULT_ENGINE": "azure"})
+        reads = []
+        def read(path):
+            reads.append(path)
+            if len(reads) == 2:
+                self.preferences.write_bytes(changed)
+            return _read_preferences(path)
+        with patch("panel_import._read_preferences", side_effect=read):
+            with self.assertRaisesRegex(ConfigError, "正在被修改"):
+                import_json_to_panel(self.data, self.panel)
+        self.assertEqual(self.preferences.read_bytes(), changed)
+        self.reload.assert_not_called()
+
+    def test_concurrent_change_after_reload_is_not_rolled_back(self):
+        changed = plistlib.dumps({"MT_DEFAULT_ENGINE": "azure"})
+        self.reload.side_effect = lambda: self.preferences.write_bytes(changed)
+        with self.assertRaisesRegex(ConfigError, "未覆盖新设置"):
+            import_json_to_panel(self.data, self.panel)
+        self.assertEqual(self.preferences.read_bytes(), changed)
+        self.assertFalse((self.data / MARKER).exists())
+        self.reload.assert_called_once_with()
+
+    def test_invalid_marker_prevents_reimport(self):
+        (self.data / MARKER).write_text("invalid marker", encoding="utf-8")
+        with self.assertRaisesRegex(ConfigError, "导入记录"):
+            import_json_to_panel(self.data, self.panel)
+        self.assertFalse(self.preferences.exists())
+        self.reload.assert_not_called()
+
+    def test_existing_import_marker_is_preserved_after_adding_youdao(self):
+        (self.data / MARKER).write_bytes(MARKER_CONTENT)
+        self.config["engines"]["youdao"] = {"enable": True, "app_key": secrets.token_hex(10),
+                                          "app_secret": secrets.token_hex(10)}
+        source = self.save_source()
+        self.assertFalse(import_json_to_panel(self.data, self.panel))
+        self.assertEqual((self.data / MARKER).read_bytes(), MARKER_CONTENT)
+        self.assertEqual(self.source.read_bytes(), source)
+        self.assertFalse(self.preferences.exists())
+        self.reload.assert_not_called()
+
+    def test_reload_command_uses_only_fixed_bundle_identifier(self):
+        with patch("panel_import.subprocess.run") as process:
+            _reload_workflow()
+        command = process.call_args.args[0]
+        self.assertEqual(command, ["osascript", "-e", f'tell application id "com.runningwithcrayons.Alfred" to reload workflow "{BUNDLE_ID}"'])
+        self.assertEqual(process.call_args.kwargs, {"check": True, "capture_output": True, "timeout": 10})
+
+
 class AdapterTests(unittest.TestCase):
     def setUp(self):
         self.request = TranslationRequest("你好 &+\n世界", "en")
 
     def test_discovery(self):
         adapters, errors = discover()
-        self.assertEqual(set(adapters), {"volc", "baidu", "aliyun", "azure"})
+        self.assertEqual(set(adapters), {"volc", "baidu", "aliyun", "azure", "youdao"})
         self.assertEqual(errors, [])
 
     def test_no_credentials_never_contacts_transport(self):
-        for adapter in (Volc, Baidu, Aliyun, Azure):
+        for adapter in (Volc, Baidu, Aliyun, Azure, Youdao):
             calls = []
             instance = adapter({"enable": True}, lambda *args: calls.append(args))
             self.assertEqual(instance.translate(self.request, 1).error_code, "config")
@@ -162,7 +559,7 @@ class AdapterTests(unittest.TestCase):
     def test_limits_count_bytes_and_characters(self):
         self.assertIsNone(Baidu(settings("baidu")).validate(TranslationRequest("中" * 2000)))
         self.assertEqual(Baidu(settings("baidu")).validate(TranslationRequest("中" * 2001)).error_code, "input_too_long")
-        for cls in (Volc, Aliyun):
+        for cls in (Volc, Aliyun, Youdao):
             instance = cls(settings(cls.engine))
             self.assertIsNone(instance.validate(TranslationRequest("😀" * 5000)))
             self.assertEqual(instance.validate(TranslationRequest("x" * 5001)).error_code, "input_too_long")
@@ -177,6 +574,90 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(body["sign"], [expected])
         self.assertEqual(body["q"], [self.request.text])
         self.assertEqual(body["to"], ["jp"])
+
+    def test_youdao_v3_signature_uses_original_text_and_unicode_character_count(self):
+        config = settings("youdao")
+        adapter = Youdao(config)
+        cases = [("你好 +&\n𠀀😀", "你好 +&\n𠀀😀"),
+                 ("0123456789abcdefghij", "0123456789abcdefghij"),
+                 ("0123456789Xabcdefghij", "012345678921abcdefghij"),
+                 ("😀" * 10 + "中" + "𠀀" * 10, "😀" * 10 + "21" + "𠀀" * 10)]
+        for text, signature_text in cases:
+            with self.subTest(text=text), patch("adapters.youdao.uuid4", return_value="fixture-nonce"), \
+                    patch("adapters.youdao.time.time", return_value=1700000000.75):
+                wire = adapter.build_request(TranslationRequest(text, "zh"))
+            body = parse_qs(wire.data.decode())
+            expected = hashlib.sha256((config["app_key"] + signature_text + "fixture-nonce" +
+                                       "1700000000" + config["app_secret"]).encode()).hexdigest()
+            self.assertEqual(wire.full_url, "https://openapi.youdao.com/api")
+            self.assertEqual(wire.get_method(), "POST")
+            self.assertEqual(body, {"q": [text], "from": ["auto"], "to": ["zh-CHS"],
+                                    "appKey": [config["app_key"]], "salt": ["fixture-nonce"],
+                                    "curtime": ["1700000000"], "signType": ["v3"],
+                                    "sign": [expected], "strict": ["true"]})
+            self.assertNotIn(config["app_secret"], wire.data.decode())
+            self.assertIn("application/x-www-form-urlencoded", wire.get_header("Content-type"))
+
+    def test_youdao_languages_and_nonce(self):
+        adapter = Youdao(settings("youdao"))
+        for language, vendor in (("zh", "zh-CHS"), ("en", "en"), ("ja", "ja"),
+                                  ("ko", "ko"), ("fr", "fr"), ("de", "de"), ("ru", "ru")):
+            with self.subTest(language=language):
+                body = parse_qs(adapter.build_request(TranslationRequest("hello", language, language)).data.decode())
+                self.assertEqual((body["from"], body["to"], body["strict"]), ([vendor], [vendor], ["true"]))
+        one = parse_qs(adapter.build_request(self.request).data.decode())
+        two = parse_qs(adapter.build_request(self.request).data.decode())
+        self.assertNotEqual(one["salt"], two["salt"])
+
+    def test_youdao_translation_and_detected_language(self):
+        adapter = Youdao(settings("youdao"))
+        for detected, expected in (("EN", "en"), ("en", "en"), ("zh-CHS", "zh"),
+                                   ("JA", "ja"), ("unknown", "und")):
+            payload = {"errorCode": "0", "translation": ["第一段\n原换行", "第二段"], "l": detected + "2en"}
+            result = adapter.parse_response(self.request, HttpResponse(200, payload, {}))
+            self.assertEqual((result.success, result.translated_text, result.from_lang),
+                             (True, "第一段\n原换行\n第二段", expected))
+        result = adapter.parse_response(TranslationRequest("hi", "zh", "fr"),
+                                        HttpResponse(200, {"errorCode": "0", "translation": ["你好"]}, {}))
+        self.assertEqual(result.from_lang, "fr")
+
+    def test_youdao_errors_and_safe_diagnostics(self):
+        adapter = Youdao(settings("youdao"))
+        cases = {"101": "invalid_input", "102": "unsupported_language", "103": "input_too_long",
+                 "108": "auth", "110": "auth", "111": "auth", "202": "auth", "203": "auth",
+                 "205": "auth", "206": "auth", "207": "auth", "302": "service_unavailable",
+                 "303": "service_unavailable", "304": "service_unavailable", "401": "quota",
+                 "411": "rate_limit", "412": "rate_limit", "999": "unknown"}
+        private = secrets.token_hex(12)
+        for code, expected in cases.items():
+            with self.subTest(code=code):
+                result = adapter.parse_response(self.request, HttpResponse(200, {"errorCode": code, "message": private}, {}))
+                self.assertEqual((result.error_code, result.vendor_code), (expected, code))
+                self.assertNotIn(private, json.dumps(result.to_dict()))
+        for status, expected in ((401, "auth"), (429, "rate_limit"), (503, "service_unavailable")):
+            self.assertEqual(adapter.parse_response(self.request, HttpResponse(status, None, {})).error_code, expected)
+
+    def test_youdao_invalid_success_payloads_never_report_success(self):
+        payloads = [None, {"translation": ["missing status"]}, {"errorCode": "0"},
+                    {"errorCode": "0", "translation": []}, {"errorCode": "0", "translation": "text"},
+                    {"errorCode": "0", "translation": [12]}, {"errorCode": "0", "translation": [" "]},
+                    {"errorCode": "0", "translation": ["text"], "l": []}]
+        for payload in payloads:
+            with self.subTest(payload=payload):
+                adapter = Youdao(settings("youdao"), lambda *_: HttpResponse(200, payload, {}))
+                self.assertEqual(adapter.translate(self.request, 1).error_code, "unknown")
+
+    def test_youdao_preflight_and_timeout_never_leak_credentials(self):
+        for values, text, expected in (({"enable": False}, "hi", "disabled"),
+                                       ({"enable": True}, "hi", "config"),
+                                       (settings("youdao"), "x" * 5001, "input_too_long")):
+            calls = []
+            adapter = Youdao(values, lambda *_: calls.append(True))
+            self.assertEqual(adapter.translate(TranslationRequest(text), 1).error_code, expected)
+            self.assertEqual(calls, [])
+        def timeout(*_):
+            raise TransportError("timeout")
+        self.assertEqual(Youdao(settings("youdao"), timeout).translate(self.request, 1).error_code, "network")
 
     def test_baidu_multiline_and_errors(self):
         adapter = Baidu(settings("baidu"))
@@ -332,6 +813,7 @@ class AutomaticTranslationTests(LocalFiles):
     def setUp(self):
         super().setUp()
         self.config["cache_enabled"] = False
+        self.config["engines"]["youdao"]["enable"] = True
         classes, _ = discover()
         self.aliases = {cls.prefix: name for name, cls in classes.items()}
         self.wires = []
@@ -340,6 +822,7 @@ class AutomaticTranslationTests(LocalFiles):
             "baidu": {"trans_result": [{"dst": "translated"}]},
             "aliyun": {"Code": 200, "Data": {"Translated": "translated"}},
             "azure": [{"translations": [{"text": "translated"}]}],
+            "youdao": {"errorCode": "0", "translation": ["translated"]},
         }
         self.adapters = {}
         for engine, cls in classes.items():
@@ -360,7 +843,7 @@ class AutomaticTranslationTests(LocalFiles):
             query = parse_qs(urlsplit(wire.full_url).query)
             return query["to"][0], query.get("from", ["auto"])[0]
         body = parse_qs(wire.data.decode())
-        if engine == "baidu":
+        if engine in ("baidu", "youdao"):
             return body["to"][0], body["from"][0]
         return body["TargetLanguage"][0], body["SourceLanguage"][0]
 
@@ -383,7 +866,7 @@ class AutomaticTranslationTests(LocalFiles):
             with self.subTest(text=text):
                 self.wires.clear()
                 results = self.translate("all:" + text)
-                self.assertEqual(len(self.wires), 4)
+                self.assertEqual(len(self.wires), 5)
                 self.assertEqual({row.to_lang for row in results}, {target})
                 for engine, wire in self.wires:
                     self.assertEqual(self.wire_languages(engine, wire), (self.adapters[engine].language_map[target], "auto"))
@@ -394,6 +877,21 @@ class AutomaticTranslationTests(LocalFiles):
         self.assertEqual([(row.engine, row.to_lang, row.fallback_from) for row in results], [("azure", "en", "volc")])
         self.assertEqual([engine for engine, _ in self.wires], ["volc", "azure"])
         self.assertTrue(all(self.wire_languages(engine, wire)[0] == "en" for engine, wire in self.wires))
+
+    def test_youdao_fallback_and_cache_are_connected(self):
+        self.config["fallback_order"] = ["youdao"]
+        self.config["cache_enabled"] = True
+        self.payloads["volc"] = {"ResponseMetadata": {"Error": {"Code": "-429"}}}
+        result = self.translate("你好")[0]
+        self.assertEqual((result.engine, result.to_lang, result.fallback_from), ("youdao", "en", "volc"))
+        self.assertEqual([engine for engine, _ in self.wires], ["volc", "youdao"])
+        self.assertEqual(parse_qs(self.wires[-1][1].data.decode())["strict"], ["true"])
+        cached = self.translate("y:你好")[0]
+        self.assertTrue(cached.cached)
+        self.assertEqual(len(self.wires), 2)
+        manual = self.translate("y:set:zh 你好")[0]
+        self.assertEqual((manual.to_lang, manual.cached), ("zh", False))
+        self.assertEqual(len(self.wires), 3)
 
     def test_automatic_and_manual_targets_do_not_mix_old_cache(self):
         self.config["cache_enabled"] = True
@@ -465,6 +963,7 @@ class SchedulerTests(LocalFiles):
         self.assertEqual(self.calls, [])
 
     def test_all_parallel_and_stable_order(self):
+        self.config["engines"]["youdao"]["enable"] = True
         entered = queue.Queue()
         release = threading.Event()
         for adapter in self.adapters.values():
@@ -477,7 +976,7 @@ class SchedulerTests(LocalFiles):
         thread = threading.Thread(target=lambda: output.put(self.scheduler().translate(Query(TranslationRequest("hello"), all_engines=True))))
         thread.start()
         try:
-            self.assertEqual({entered.get(timeout=1) for _ in range(4)}, set(self.adapters))
+            self.assertEqual({entered.get(timeout=1) for _ in self.adapters}, set(self.adapters))
         finally:
             release.set()
             thread.join(2)
@@ -488,6 +987,7 @@ class SchedulerTests(LocalFiles):
         result = self.scheduler().translate(Query(TranslationRequest("hello"), all_engines=True))
         self.assertEqual(sum(row.success for row in result), 3)
         self.assertEqual(len(self.calls), 4)
+        self.assertNotIn("youdao", self.calls)
 
     def test_total_deadline_does_not_join_late_worker(self):
         self.config["query_timeout_seconds"] = 0.1
@@ -569,6 +1069,12 @@ class HttpTests(unittest.TestCase):
 
 
 class OutputAndEntryTests(LocalFiles):
+    def setUp(self):
+        super().setUp()
+        importer = patch("main.import_json_to_panel", return_value=False)
+        self.importer = importer.start()
+        self.addCleanup(importer.stop)
+
     def environment(self):
         return {**os.environ, "alfred_workflow_data": str(self.path / "data"),
                 "alfred_workflow_cache": str(self.path / "cache"), "PYTHONDONTWRITEBYTECODE": "1"}
@@ -601,11 +1107,56 @@ class OutputAndEntryTests(LocalFiles):
             self.assertEqual(process.stderr, "")
         self.assertFalse((self.path / "cache" / "translations.json").exists())
 
-    def test_configure_only_opens_the_private_file(self):
+    def test_configure_imports_before_opening_native_panel(self):
+        order = []
+        self.importer.side_effect = lambda directory: order.append("import") or True
+        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
+            opened.side_effect = lambda *args, **kwargs: order.append("open")
+            result = run(["configure"])
+        self.assertEqual(order, ["import", "open"])
+        self.importer.assert_called_once_with(self.path / "data")
+        command = opened.call_args.args[0]
+        self.assertEqual(command[:2], ["osascript", "-e"])
+        self.assertIn(f'reveal workflow "{BUNDLE_ID}" configuration true', command[2])
+        self.assertEqual(opened.call_args.kwargs["timeout"], 10)
+        self.assertIn("面板", result["items"][0]["title"])
+        self.assertIn("已从 JSON 导入", result["items"][0]["subtitle"])
+
+    def test_failed_import_still_opens_panel_with_safe_reason(self):
+        self.importer.side_effect = ConfigError("自动导入未完成，原 JSON 保留")
         with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
             result = run(["configure"])
+        self.assertIn("面板", result["items"][0]["title"])
+        self.assertIn("原 JSON 保留", result["items"][0]["subtitle"])
+        opened.assert_called_once()
+
+    def test_configure_json_only_opens_the_private_file(self):
+        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
+            result = run(["configure-json"])
         self.assertEqual(opened.call_args.args[0], ["open", "-t", str(self.path / "data" / "config.json")])
         self.assertFalse(result["items"][0]["valid"])
+        self.importer.assert_not_called()
+
+    def test_configure_failure_returns_safe_guidance(self):
+        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run", side_effect=subprocess.TimeoutExpired("fixture", 10)):
+            result = run(["configure"])
+        self.assertFalse(result["items"][0]["valid"])
+        self.assertIn("Configure Workflow", result["items"][0]["subtitle"])
+
+    def test_native_panel_applescript_compiles_without_execution(self):
+        compiler = shutil.which("osacompile")
+        if compiler is None:
+            self.skipTest("当前系统没有 AppleScript 编译器")
+        with patch.dict(os.environ, self.environment()), patch("main.subprocess.run") as opened:
+            run(["configure"])
+        scripts = [opened.call_args.args[0][2]]
+        with patch("panel_import.subprocess.run") as reloaded:
+            _reload_workflow()
+        scripts.append(reloaded.call_args.args[0][2])
+        for i, script in enumerate(scripts):
+            process = subprocess.run([compiler, "-o", str(self.path / f"configure-{i}.scpt"), "-e", script],
+                                     capture_output=True, text=True, timeout=10)
+            self.assertEqual(process.returncode, 0, process.stderr)
 
     def test_logs_have_metadata_not_text(self):
         import logging

@@ -1,7 +1,7 @@
 {
   "default_engine": "volc",
   "fallback_enable": true,
-  "fallback_order": ["volc", "azure", "aliyun", "baidu"],
+  "fallback_order": ["volc", "azure", "aliyun", "baidu", "youdao"],
   "target_lang_default": "zh",
   "request_timeout_seconds": 10,
   "query_timeout_seconds": 15,
@@ -14,6 +14,7 @@
     "volc": {"enable": true, "ak": "", "sk": "", "region": "cn-north-1"},
     "baidu": {"enable": true, "appid": "", "appkey": ""},
     "aliyun": {"enable": true, "ak": "", "sk": "", "region": "cn-hangzhou"},
-    "azure": {"enable": true, "key": "", "region": ""}
+    "azure": {"enable": true, "key": "", "region": ""},
+    "youdao": {"enable": false, "app_key": "", "app_secret": ""}
   }
 }

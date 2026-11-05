@@ -9,7 +9,7 @@ from pathlib import Path
 from config import BUNDLE_ID, ROOT, VERSION
 
 RUNTIME_FILES = (
-    "main.py", "config.py", "models.py", "parser.py", "scheduler.py", "cache.py",
+    "main.py", "config.py", "panel_import.py", "models.py", "parser.py", "scheduler.py", "cache.py",
     "http_client.py", "output.py", "utils.py", "bootstrap.sh", "config.example.json",
     "info.plist", "README.md",
 )
@@ -21,8 +21,17 @@ def build() -> Path:
         raise ValueError("Workflow 元数据与代码版本不一致")
     example = json.loads((ROOT / "config.example.json").read_text(encoding="utf-8"))
     for settings in example["engines"].values():
-        if any(settings.get(key) for key in ("ak", "sk", "key", "appid", "appkey")):
+        if any(settings.get(key) for key in ("ak", "sk", "key", "appid", "appkey", "app_key", "app_secret")):
             raise ValueError("配置模板不得包含凭据")
+    private_variables = {"PYTHON_BINARY"}
+    for engine, settings in example["engines"].items():
+        private_variables.update(f"MT_{engine.upper()}_{key.upper()}" for key in settings
+                                 if key not in ("enable", "region"))
+    for field in metadata.get("userconfigurationconfig", []):
+        if field.get("variable") in private_variables and field.get("config", {}).get("default"):
+            raise ValueError("原生面板不得预填密钥或本机解释器路径")
+    if any(metadata.get("variables", {}).get(name) for name in private_variables):
+        raise ValueError("发行环境变量不得包含私有值")
     files = [ROOT / name for name in RUNTIME_FILES]
     files.extend(sorted((ROOT / "adapters").glob("*.py")))
     output = ROOT / "dist" / "MultiTranslate.alfredworkflow"

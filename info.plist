@@ -7,11 +7,11 @@
 	<key>name</key>
 	<string>MultiTranslate 多引擎翻译</string>
 	<key>version</key>
-	<string>1.1.0</string>
+	<string>1.4.0</string>
 	<key>createdby</key>
 	<string>MultiTranslate</string>
 	<key>description</key>
-	<string>火山、百度、阿里云、Azure 自动中英互译；输入 trconfig 配置密钥。</string>
+	<string>五引擎自动中英互译，新增有道翻译（y:）；trconfig 配置服务商和密钥。</string>
 	<key>disabled</key>
 	<false/>
 	<key>category</key>
@@ -36,6 +36,19 @@
 			<dict>
 				<key>destinationuid</key>
 				<string>FE2C8CDE-AB81-464D-8609-CE5BC7402DC6</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+		<key>4AF4F90B-BA28-4AF0-BCFD-C37D32CF1E3F</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>D13039AE-ADFE-469A-8101-EC8322839067</string>
 				<key>modifiers</key>
 				<integer>0</integer>
 				<key>modifiersubtext</key>
@@ -129,7 +142,7 @@
 				<key>title</key>
 				<string>配置翻译服务商</string>
 				<key>subtext</key>
-				<string>打开用户数据目录中的 config.json</string>
+				<string>自动导入已有 JSON，打开原生配置面板</string>
 				<key>argumenttype</key>
 				<integer>2</integer>
 				<key>withspace</key>
@@ -157,11 +170,57 @@
 				<integer>0</integer>
 			</dict>
 		</dict>
+		<dict>
+			<key>type</key>
+			<string>alfred.workflow.input.keyword</string>
+			<key>uid</key>
+			<string>4AF4F90B-BA28-4AF0-BCFD-C37D32CF1E3F</string>
+			<key>version</key>
+			<integer>1</integer>
+			<key>config</key>
+			<dict>
+				<key>keyword</key>
+				<string>trconfig-json</string>
+				<key>title</key>
+				<string>编辑 JSON 配置（备用）</string>
+				<key>subtext</key>
+				<string>关闭原生面板配置后，JSON 设置生效</string>
+				<key>argumenttype</key>
+				<integer>2</integer>
+				<key>withspace</key>
+				<false/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>alfred.workflow.action.script</string>
+			<key>uid</key>
+			<string>D13039AE-ADFE-469A-8101-EC8322839067</string>
+			<key>version</key>
+			<integer>2</integer>
+			<key>config</key>
+			<dict>
+				<key>type</key>
+				<integer>0</integer>
+				<key>script</key>
+				<string>exec bash ./bootstrap.sh configure-json</string>
+				<key>scriptargtype</key>
+				<integer>1</integer>
+				<key>scriptfile</key>
+				<string></string>
+				<key>escaping</key>
+				<integer>0</integer>
+			</dict>
+		</dict>
 	</array>
 	<key>readme</key>
-	<string>需要 Alfred 5 Powerpack 和 Python 3.10+。输入 trconfig 填写自己的密钥，再用 tr hello 或 tr 你好自动中英互译；手动 set: 指定语言优先。
-使用说明见安装目录 README.md。真实 API 接入需要你的账号与密钥；all 与兜底可能产生多家费用。
-若找不到 Python，在 Workflow 环境变量 PYTHON_BINARY 中填写自己安装的 Python 解释器位置。</string>
+	<string>支持火山、百度、阿里云、微软 Azure、有道；中文译英文，英文译中文，手动 set: 优先。
+
+新增有道：在下方启用有道翻译，填写应用 ID（appKey）和应用密钥（appSecret），保存后输入 tr y:你好 或 tr y:hello。可选为默认服务商；需要兜底时将 youdao 加入顺序。
+
+已有 JSON 设置：在 Alfred 搜索浮窗运行一次 trconfig，自动导入服务商、启用状态、密钥、地域和兜底设置，然后打开面板。已保存字段不会被覆盖，原 JSON 保留。导入只执行一次，已完成导入的用户请直接填写新增有道字段。
+
+核对设置后勾选“使用此面板配置”并保存；未勾选时继续使用 JSON。无需配置全部五家。trconfig-json 打开 JSON，高级缓存/超时等自定义项请继续使用 JSON 模式。需要 Alfred 5 Powerpack 和 Python 3.10+。</string>
 	<key>variables</key>
 	<dict>
 		<key>PYTHON_BINARY</key>
@@ -170,9 +229,496 @@
 	<key>variablesdontexport</key>
 	<array>
 		<string>PYTHON_BINARY</string>
+		<string>MT_USE_PANEL</string>
+		<string>MT_DEFAULT_ENGINE</string>
+		<string>MT_FALLBACK_ENABLED</string>
+		<string>MT_FALLBACK_ORDER</string>
+		<string>MT_VOLC_ENABLED</string>
+		<string>MT_VOLC_AK</string>
+		<string>MT_VOLC_SK</string>
+		<string>MT_VOLC_REGION</string>
+		<string>MT_BAIDU_ENABLED</string>
+		<string>MT_BAIDU_APPID</string>
+		<string>MT_BAIDU_APPKEY</string>
+		<string>MT_ALIYUN_ENABLED</string>
+		<string>MT_ALIYUN_AK</string>
+		<string>MT_ALIYUN_SK</string>
+		<string>MT_ALIYUN_REGION</string>
+		<string>MT_AZURE_ENABLED</string>
+		<string>MT_AZURE_KEY</string>
+		<string>MT_AZURE_REGION</string>
+		<string>MT_YOUDAO_ENABLED</string>
+		<string>MT_YOUDAO_APP_KEY</string>
+		<string>MT_YOUDAO_APP_SECRET</string>
 	</array>
 	<key>userconfigurationconfig</key>
-	<array/>
+	<array>
+		<dict>
+			<key>type</key>
+			<string>checkbox</string>
+			<key>variable</key>
+			<string>MT_USE_PANEL</string>
+			<key>label</key>
+			<string>配置方式</string>
+			<key>description</key>
+			<string>默认关闭，沿用 config.json。已有设置先运行一次 trconfig 自动导入，确认后勾选；导入不改变此开关。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<false/>
+				<key>required</key>
+				<false/>
+				<key>text</key>
+				<string>使用此面板配置</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>popupbutton</string>
+			<key>variable</key>
+			<string>MT_DEFAULT_ENGINE</string>
+			<key>label</key>
+			<string>默认服务商</string>
+			<key>description</key>
+			<string>普通 tr 查询优先使用。请同时勾选下方对应服务商并填写密钥。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>volc</string>
+				<key>pairs</key>
+				<array>
+					<array>
+						<string>火山引擎</string>
+						<string>volc</string>
+					</array>
+					<array>
+						<string>百度翻译</string>
+						<string>baidu</string>
+					</array>
+					<array>
+						<string>阿里云</string>
+						<string>aliyun</string>
+					</array>
+					<array>
+						<string>微软 Azure</string>
+						<string>azure</string>
+					</array>
+					<array>
+						<string>有道翻译</string>
+						<string>youdao</string>
+					</array>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>checkbox</string>
+			<key>variable</key>
+			<string>MT_FALLBACK_ENABLED</string>
+			<key>label</key>
+			<string>自动兜底</string>
+			<key>description</key>
+			<string>默认开启；显式指定服务商或 all: 不兜底。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<true/>
+				<key>required</key>
+				<false/>
+				<key>text</key>
+				<string>默认服务商失败时切换其他已启用服务商</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_FALLBACK_ORDER</string>
+			<key>label</key>
+			<string>兜底与显示顺序</string>
+			<key>description</key>
+			<string>逗号分隔服务商 ID：volc、azure、aliyun、baidu、youdao。留空时普通查询只尝试默认服务商；已保存的顺序不自动修改。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>volc,azure,aliyun,baidu,youdao</string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>checkbox</string>
+			<key>variable</key>
+			<string>MT_VOLC_ENABLED</string>
+			<key>label</key>
+			<string>火山引擎</string>
+			<key>description</key>
+			<string>启用后参与默认查询、v: 指定查询和 all: 对比；未使用的服务商保持关闭。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<false/>
+				<key>required</key>
+				<false/>
+				<key>text</key>
+				<string>启用 火山引擎</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_VOLC_AK</string>
+			<key>label</key>
+			<string>火山引擎 AccessKey ID</string>
+			<key>description</key>
+			<string>填写火山 AccessKey ID</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_VOLC_SK</string>
+			<key>label</key>
+			<string>火山引擎 SecretKey</string>
+			<key>description</key>
+			<string>填写火山 SecretKey，请勿截图分享</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_VOLC_REGION</string>
+			<key>label</key>
+			<string>火山引擎 地域</string>
+			<key>description</key>
+			<string>此文本翻译接口要求 cn-north-1</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>cn-north-1</string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>checkbox</string>
+			<key>variable</key>
+			<string>MT_BAIDU_ENABLED</string>
+			<key>label</key>
+			<string>百度翻译</string>
+			<key>description</key>
+			<string>启用后参与默认查询、b: 指定查询和 all: 对比；未使用的服务商保持关闭。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<false/>
+				<key>required</key>
+				<false/>
+				<key>text</key>
+				<string>启用 百度翻译</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_BAIDU_APPID</string>
+			<key>label</key>
+			<string>百度翻译 AppID</string>
+			<key>description</key>
+			<string>填写翻译开放平台 AppID</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_BAIDU_APPKEY</string>
+			<key>label</key>
+			<string>百度翻译 密钥</string>
+			<key>description</key>
+			<string>填写翻译开放平台密钥，请勿截图分享</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>checkbox</string>
+			<key>variable</key>
+			<string>MT_ALIYUN_ENABLED</string>
+			<key>label</key>
+			<string>阿里云</string>
+			<key>description</key>
+			<string>启用后参与默认查询、a: 指定查询和 all: 对比；未使用的服务商保持关闭。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<false/>
+				<key>required</key>
+				<false/>
+				<key>text</key>
+				<string>启用 阿里云</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_ALIYUN_AK</string>
+			<key>label</key>
+			<string>阿里云 AccessKey ID</string>
+			<key>description</key>
+			<string>填写有机器翻译权限的 AccessKey ID</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_ALIYUN_SK</string>
+			<key>label</key>
+			<string>阿里云 AccessKey Secret</string>
+			<key>description</key>
+			<string>填写 AccessKey Secret，请勿截图分享</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_ALIYUN_REGION</string>
+			<key>label</key>
+			<string>阿里云 地域</string>
+			<key>description</key>
+			<string>当前适配器使用 cn-hangzhou 接入点</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string>cn-hangzhou</string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>checkbox</string>
+			<key>variable</key>
+			<string>MT_AZURE_ENABLED</string>
+			<key>label</key>
+			<string>微软 Azure</string>
+			<key>description</key>
+			<string>启用后参与默认查询、m: 指定查询和 all: 对比；未使用的服务商保持关闭。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<false/>
+				<key>required</key>
+				<false/>
+				<key>text</key>
+				<string>启用 微软 Azure</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_AZURE_KEY</string>
+			<key>label</key>
+			<string>微软 Azure 订阅密钥</string>
+			<key>description</key>
+			<string>填写 Translator 资源密钥，请勿截图分享</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_AZURE_REGION</string>
+			<key>label</key>
+			<string>微软 Azure 地域</string>
+			<key>description</key>
+			<string>全球资源留空；区域资源填写实际区域，如 eastasia</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>checkbox</string>
+			<key>variable</key>
+			<string>MT_YOUDAO_ENABLED</string>
+			<key>label</key>
+			<string>有道翻译</string>
+			<key>description</key>
+			<string>默认关闭；启用后参与默认查询、y: 指定查询和 all: 对比。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<false/>
+				<key>required</key>
+				<false/>
+				<key>text</key>
+				<string>启用 有道翻译</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_YOUDAO_APP_KEY</string>
+			<key>label</key>
+			<string>有道 应用 ID（appKey）</string>
+			<key>description</key>
+			<string>默认空；启用有道后必填，从有道智云应用管理取得，不是应用密钥。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>MT_YOUDAO_APP_SECRET</string>
+			<key>label</key>
+			<string>有道 应用密钥（appSecret）</string>
+			<key>description</key>
+			<string>默认空；启用有道后必填，与上方应用 ID 配对，用于 v3 签名，请勿截图分享。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+		<dict>
+			<key>type</key>
+			<string>textfield</string>
+			<key>variable</key>
+			<string>PYTHON_BINARY</string>
+			<key>label</key>
+			<string>Python 解释器（可选）</string>
+			<key>description</key>
+			<string>留空使用 PATH 中的 python3；找不到时填写自己安装的 Python 3.10+ 解释器位置。</string>
+			<key>config</key>
+			<dict>
+				<key>default</key>
+				<string></string>
+				<key>placeholder</key>
+				<string></string>
+				<key>required</key>
+				<false/>
+				<key>trim</key>
+				<true/>
+			</dict>
+		</dict>
+	</array>
 	<key>uidata</key>
 	<dict>
 		<key>B68BF24B-BA88-4B6C-8E47-3BDFE2EA3853</key>
@@ -202,6 +748,20 @@
 			<integer>330</integer>
 			<key>ypos</key>
 			<integer>230</integer>
+		</dict>
+		<key>4AF4F90B-BA28-4AF0-BCFD-C37D32CF1E3F</key>
+		<dict>
+			<key>xpos</key>
+			<integer>60</integer>
+			<key>ypos</key>
+			<integer>390</integer>
+		</dict>
+		<key>D13039AE-ADFE-469A-8101-EC8322839067</key>
+		<dict>
+			<key>xpos</key>
+			<integer>330</integer>
+			<key>ypos</key>
+			<integer>390</integer>
 		</dict>
 	</dict>
 </dict>
